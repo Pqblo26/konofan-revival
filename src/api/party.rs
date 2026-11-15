@@ -845,6 +845,27 @@ pub async fn member_skill_up(
     .await
     .context("failed to prepare statement")?;
 
+  // "Use Reserves": the duplicates (reserve members of the same member) are used up
+  let mut used_reserves = Vec::new();
+  if params.kind == 0 {
+    #[rustfmt::skip]
+    let rows = transaction.query(/* language=postgresql */ r#"
+      delete from user_members_reserve
+      where id in (
+        select id from user_members_reserve
+        where user_id = $1 and member_id = $2
+        order by id
+        limit $3
+      )
+      returning id, member_id
+    "#, &[&session.user_id, &params.user_member_id, &(params.amount as i64)]).await.context("failed to use reserve members")?;
+    if (rows.len() as i32) < params.amount {
+      warn!(?params, available = rows.len(), "not enough reserve members for skill up");
+      return Ok(Unsigned(CallResponse::new_success(Box::new(MemberSkillUpResponse { skill_levels: vec![] }))));
+    }
+    used_reserves = rows.iter().map(|row| (row.get::<_, i64>(0), row.get::<_, i64>(1))).collect::<Vec<_>>();
+  }
+
   // Take random skill with level < 5 and upgrade it
   let mut upgrades = HashMap::new();
   for roll in 0..rolls {
@@ -901,6 +922,9 @@ pub async fn member_skill_up(
 
   let mut response = CallResponse::new_success(Box::new(MemberSkillUpResponse { skill_levels }));
   response.add_remote_data(UpdateMember::new(member.to_member_parameter_wire()).into_remote_data());
+  for (id, member_id) in used_reserves {
+    response.add_remote_data(crate::blob::DeleteMember::new(id, member_id).into_remote_data());
+  }
 
   Ok(Unsigned(response))
 }
