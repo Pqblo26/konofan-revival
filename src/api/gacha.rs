@@ -1318,14 +1318,90 @@ pub async fn gacha_tutorial_reward(state: Arc<AppState>, session: Arc<Session>) 
   Ok(Unsigned(response))
 }
 
+/// How a draw is paid.
+#[derive(Debug, Clone, Copy)]
+enum GachaPayment {
+  /// Quartz button of `amount` draws (`money_type` 1 seen for the x10)
+  Quartz,
+  /// "Once daily" button (`policy` 1DAYLIMIT)
+  Daily,
+  /// Gacha ticket (`ticket_gacha`), one per press
+  Ticket,
+}
+
+/// The `gacha_item` row of the button pressed.
+fn gacha_button(gacha_id: i32, amount: usize, payment: GachaPayment) -> Option<&'static Value> {
+  let id = gacha_id.to_string();
+  let rows: Vec<&'static Value> = get_master_manager()
+    .get_master("gacha_item")
+    .iter()
+    .filter(|row| row["gacha_id"].as_str() == Some(id.as_str()))
+    .collect();
+  let field = |row: &Value, key: &str| row[key].as_str().and_then(|value| value.parse::<i64>().ok()).unwrap_or(0);
+  let daily = |row: &Value| row["policy"].as_str() == Some("1DAYLIMIT");
+  match payment {
+    GachaPayment::Daily => rows.iter().copied().find(|row| daily(row)),
+    GachaPayment::Ticket => rows.iter().copied().find(|row| field(row, "ticket_gacha") != 0),
+    GachaPayment::Quartz => rows
+      .iter()
+      .copied()
+      .find(|row| !daily(row) && field(row, "drawcount") == amount as i64)
+      .or_else(|| rows.iter().copied().find(|row| field(row, "drawcount") == amount as i64)),
+  }
+}
+
+/// Takes the price of the button: quartz (free first when the button takes free quartz, else
+/// paid only) or one gacha ticket. Returns None when there is not enough.
+async fn pay_gacha(
+  transaction: &deadpool_postgres::Transaction<'_>,
+  user_id: crate::user::id::UserId,
+  row: &Value,
+  payment: GachaPayment,
+) -> anyhow::Result<Option<Vec<crate::api::RemoteData>>> {
+  let field = |key: &str| row[key].as_str().and_then(|value| value.parse::<i32>().ok()).unwrap_or(0);
+  if let GachaPayment::Ticket = payment {
+    let ticket_id = field("ticket_gacha") as i64;
+    #[rustfmt::skip]
+    let owned: i32 = transaction.query_opt(/* language=postgresql */ r#"
+      select quantity from user_items where user_id = $1 and item_type = $2 and item_id = $3
+    "#, &[&user_id, &(i32::from(RemoteDataItemType::Ticket) as i64), &ticket_id]).await
+      .context("failed to read gacha tickets")?.map(|row| row.get(0)).unwrap_or(0);
+    if owned < 1 {
+      return Ok(None);
+    }
+    let update = UpdateItemCountBy::new(transaction).await?;
+    let item = update.run(user_id, (RemoteDataItemType::Ticket, ticket_id), -1).await?;
+    return Ok(Some(item.into_remote_data()));
+  }
+
+  let mut wallet = crate::user::wallet::Wallet::load(transaction, user_id).await?;
+  let (free_price, paid_price) = (field("realmoneyfree"), field("realmoney"));
+  let paid = if free_price > 0 {
+    wallet.spend_quartz(free_price).is_ok()
+  } else if paid_price > 0 {
+    wallet.add(RemoteDataItemType::RealMoney, -(paid_price as i64)).is_ok()
+  } else {
+    true
+  };
+  if !paid {
+    return Ok(None);
+  }
+  wallet.save(transaction, user_id).await?;
+  Ok(Some(wallet.to_remote_data()))
+}
+
 async fn gacha_impl(
   state: Arc<AppState>,
   session: Arc<Session>,
   gacha_id: i32,
-  money_type: i32,
+  payment: GachaPayment,
   amount: usize,
 ) -> impl IntoHandlerResponse {
   let mut client = state.get_database_client().await.unwrap();
+  let button = gacha_button(gacha_id, amount, payment);
+  if button.is_none() {
+    warn!(gacha_id, ?payment, amount, "no gacha_item row for this button, drawing for free");
+  }
 
   let pool = load_draw_pool(&client, gacha_id).await.unwrap();
   let member_ids = if pool.is_empty() {
@@ -1353,6 +1429,21 @@ async fn gacha_impl(
     .collect::<Vec<_>>();
 
   let transaction = client.transaction().await.unwrap();
+
+  let paid_remote = match button {
+    Some(row) => match pay_gacha(&transaction, session.user_id, row, payment).await.unwrap() {
+      Some(remote) => remote,
+      None => {
+        warn!(gacha_id, ?payment, amount, "not enough quartz or tickets for the gacha");
+        let response: CallResponse<dyn CallCustom> = CallResponse::new_custom(
+          crate::call::STATUS_QUARTZ_NOT_ENOUGH,
+          Box::new(GachaResult { gacha_id, goods: vec![], bonus_info: None, bonus_step: None }),
+        );
+        return Unsigned(response);
+      }
+    },
+    None => Vec::new(),
+  };
 
   #[rustfmt::skip]
   let statement = transaction
@@ -1444,6 +1535,7 @@ async fn gacha_impl(
   }
 
   transaction.commit().await.unwrap();
+  response.remote.extend(paid_remote);
 
   // Fixed very old bug back from commit [baa1fae0],
   // this was intended to be notification data and not remote data.
@@ -1476,7 +1568,8 @@ pub async fn gacha_chain(
   session: Arc<Session>,
   Params(params): Params<GachaChainRequest>,
 ) -> impl IntoHandlerResponse {
-  gacha_impl(state, session, params.gacha_id, params.money_type, 10).await
+  info!(?params, "gachachain");
+  gacha_impl(state, session, params.gacha_id, GachaPayment::Quartz, 10).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -1491,7 +1584,8 @@ pub async fn gacha_normal(
   session: Arc<Session>,
   Params(params): Params<GachaNormalRequest>,
 ) -> impl IntoHandlerResponse {
-  gacha_impl(state, session, params.gacha_id, params.money_type, 1).await
+  info!(?params, "gachanormal");
+  gacha_impl(state, session, params.gacha_id, GachaPayment::Quartz, 1).await
 }
 
 // See [Wonder_Api_GachadailyRequest_Fields]
@@ -1506,9 +1600,19 @@ pub async fn gacha_daily(
   session: Arc<Session>,
   Params(params): Params<GachaDailyRequest>,
 ) -> impl IntoHandlerResponse {
-  warn!(?params, "encountered stub: gacha_daily");
+  info!(?params, "gachadaily");
+  gacha_impl(state, session, params.gacha_id, GachaPayment::Daily, 1).await
+}
 
-  gacha_impl(state, session, params.gacha_id, params.money_type, 1).await
+/// Ticket recruits (e.g. the free 10x). The request has not been seen yet: its body is logged and
+/// the gacha is taken from `gacha_id`; one ticket per press, `drawcount` draws.
+pub async fn gacha_ticket(state: Arc<AppState>, session: Arc<Session>, request: crate::api::ApiRequest) -> impl IntoHandlerResponse {
+  info!(body = ?request.body, "gachaticket request");
+  let gacha_id: i32 = request.body.get("gacha_id").and_then(|value| value.parse().ok()).unwrap_or(0);
+  let amount = gacha_button(gacha_id, 0, GachaPayment::Ticket)
+    .and_then(|row| row["drawcount"].as_str()?.parse::<usize>().ok())
+    .unwrap_or(1);
+  gacha_impl(state, session, gacha_id, GachaPayment::Ticket, amount).await
 }
 
 #[derive(Debug, Deserialize)]
