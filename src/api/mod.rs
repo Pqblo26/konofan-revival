@@ -40,6 +40,7 @@ pub mod present;
 pub mod profile;
 pub mod quest;
 pub mod shop;
+pub mod smith_cost;
 pub mod smith_craft;
 pub mod smith_sell;
 pub mod smith_upgrade;
