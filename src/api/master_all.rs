@@ -140,6 +140,10 @@ async fn load_masters() -> HashMap<String, MasterAllItem> {
   masters
 }
 
+/// The event shown as running ("Etiquette for This New Year's Party!"): its dates, exchange and
+/// missions are moved to now.
+pub const ACTIVE_EVENT_ID: &str = "24011";
+
 async fn patch_master(name: &str, value: &mut Value) {
   let now = chrono::Utc::now();
 
@@ -196,6 +200,18 @@ async fn patch_master(name: &str, value: &mut Value) {
         }
       }
     }
+    // The event's exchange (same id as the event): it showed a negative time left
+    "exchange" => {
+      info!("patching exchange");
+      if let Some(array) = value.as_array_mut() {
+        for item in array.iter_mut().filter_map(|item| item.as_object_mut()) {
+          if item.get("exchange_id").and_then(|id| id.as_str()) == Some(ACTIVE_EVENT_ID) {
+            item.insert("start_at".to_owned(), Value::String(start_at_str.clone()));
+            item.insert("end_at".to_owned(), Value::String(end_at_str.clone()));
+          }
+        }
+      }
+    }
     // jq '.[]' text.json -c -C | grep -i 'new year' | grep -i 'area'
     "event_config" => {
       info!("patching event_config");
@@ -203,7 +219,7 @@ async fn patch_master(name: &str, value: &mut Value) {
         for item in array {
           if let Some(item) = item.as_object_mut() {
             // "Etiquette for This New Year's Party!"
-            if item.get("event_id").unwrap() != "24011" {
+            if item.get("event_id").unwrap() != ACTIVE_EVENT_ID {
               continue;
             }
 

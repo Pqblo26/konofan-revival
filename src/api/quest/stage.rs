@@ -110,7 +110,8 @@ fn load() -> HashMap<i32, StageInfo> {
           long(row, "mainmission_reward3_packid").unwrap_or(0),
         ],
         unlock_stages: [
-          int(row, "unlock_clearstage").unwrap_or(0),
+          // Event quests call it unlock_clearstage1
+          int(row, "unlock_clearstage").or_else(|| int(row, "unlock_clearstage1")).unwrap_or(0),
           int(row, "unlock_clearstage2").unwrap_or(0),
         ],
         unlock_date_start: row

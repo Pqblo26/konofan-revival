@@ -190,14 +190,49 @@ impl MissionState {
         (self.received_of_type("BEGINNER", "all_beginner") >= others) as i32
       }
       "player_home_chara" => (self.counter("home_chara").total > 0) as i32,
+      // Event missions (master `event_mission`)
+      "event_battle_count_unique" => self.progress.get(&y).is_some_and(|progress| progress.clear_count > 0) as i32,
+      "event_battle_normal" | "event_battle_hard" => event_stages(mission)
+        .iter()
+        .filter(|id| self.progress.get(id).is_some_and(|progress| progress.clear_count > 0))
+        .count() as i32,
+      "event_battle_normal_perfect" | "event_battle_hard_perfect" => event_stages(mission)
+        .iter()
+        .filter(|id| self.progress.get(id).is_some_and(|progress| progress.tasks.iter().all(|task| *task)))
+        .count() as i32,
       _ => 0,
     }
   }
 }
 
-/// Missions (Normal, Daily, Beginner) by id.
+/// Missions (Normal, Daily, Beginner, and event ones) by id.
 pub fn mission_row(mission_id: i32) -> Option<&'static Value> {
-  get_master_manager().get_master("mission").iter().find(|mission| int(mission, "mission_id") == mission_id)
+  get_master_manager()
+    .get_master("mission")
+    .iter()
+    .chain(get_master_manager().get_master("event_mission").iter())
+    .find(|mission| int(mission, "mission_id") == mission_id)
+}
+
+/// Missions of the running event.
+pub fn active_event_missions() -> Vec<&'static Value> {
+  get_master_manager()
+    .get_master("event_mission")
+    .iter()
+    .filter(|mission| mission["event_id"].as_str() == Some(crate::api::master_all::ACTIVE_EVENT_ID))
+    .collect()
+}
+
+/// Quest stages of the mission's event, normal (mode 1) or hard (mode 2) by the rule's name.
+fn event_stages(mission: &Value) -> Vec<i32> {
+  let event_id = mission["event_id"].as_str().unwrap_or("");
+  let mode = if mission["rule"].as_str().unwrap_or("").contains("hard") { "2" } else { "1" };
+  get_master_manager()
+    .get_master("event_marathon_quest_stage")
+    .iter()
+    .filter(|stage| stage["event_id"].as_str() == Some(event_id) && stage["mode"].as_str() == Some(mode))
+    .map(|stage| int(stage, "id"))
+    .collect()
 }
 
 /// Target the client shows for a rule, when it is the rule's x; None when the client works it out
@@ -224,6 +259,9 @@ pub fn target(mission: &Value) -> Option<i32> {
       )
     }
     "all_beginner" => Some(1),
+    "event_battle_normal" | "event_battle_hard" | "event_battle_normal_perfect" | "event_battle_hard_perfect" => {
+      Some(event_stages(mission).len() as i32)
+    }
     "time" => Some(1),
     _ => Some(int(mission, "rule_x")).filter(|x| *x > 0),
   }
