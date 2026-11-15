@@ -23,9 +23,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-/// Potential boards shown for every character until Potential Blessing is implemented.
-pub const DEFAULT_PIECE_BOARD_STAGES: [i32; 4] = [100001001, 100002002, 100003003, 100004004];
-
 pub fn int(row: &Value, key: &str) -> i64 {
   row[key].as_str().and_then(|value| value.parse().ok()).unwrap_or(0)
 }
@@ -127,6 +124,11 @@ pub async fn character_parameter<'a>(
     select stage_id from user_character_enhance where user_id = $1 and character_id = $2
   "#, &[&user_id, &character_id]).await.context("failed to read released trial stages")?
     .iter().map(|row| row.get(0)).collect();
+  #[rustfmt::skip]
+  let board_released: Vec<i64> = client.query(/* language=postgresql */ r#"
+    select stage_id from user_character_piece_board where user_id = $1 and character_id = $2
+  "#, &[&user_id, &character_id]).await.context("failed to read released board stages")?
+    .iter().map(|row| row.get(0)).collect();
   Ok(CharacterParameter {
     id: character_id,
     character_id,
@@ -134,7 +136,7 @@ pub async fn character_parameter<'a>(
     rank_progress: intimacy,
     sp_skill,
     character_enhance_stage_id_list: stage_id_list(character_id, &released),
-    character_piece_board_stage_id_list: DEFAULT_PIECE_BOARD_STAGES.to_vec(),
+    character_piece_board_stage_id_list: crate::api::piece_board::stage_id_list(character_id, &board_released),
     is_trial: false,
   })
 }

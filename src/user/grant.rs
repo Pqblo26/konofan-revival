@@ -82,7 +82,7 @@ pub async fn ensure_characters(
             })
             .collect(),
           character_enhance_stage_id_list: vec![0, 0, 0, 0],
-          character_piece_board_stage_id_list: vec![100001001, 100002002, 100003003, 100004004],
+          character_piece_board_stage_id_list: crate::api::piece_board::stage_id_list(character_id, &[]),
           is_trial: false,
         },
       )
