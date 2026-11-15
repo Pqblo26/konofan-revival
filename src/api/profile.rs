@@ -58,7 +58,11 @@ pub async fn profile(state: Arc<AppState>, session: Arc<Session>) -> impl IntoHa
         users.about_me,
         users.favorite_member,
         users.honor,
-        (select max(last_used) from user_devices where user_devices.user_id = users.id) as most_recent_last_used
+        (select max(last_used) from user_devices where user_devices.user_id = users.id) as most_recent_last_used,
+        (select rank from user_progress where user_progress.user_id = users.id) as rank,
+        (select count(*) from user_members where user_members.user_id = users.id) as members,
+        (select coalesce(sum(task1::int + task2::int + task3::int), 0) from user_quest_progress
+          where user_quest_progress.user_id = users.id) as crowns
       from users
       where id = $1
     "#)
@@ -79,6 +83,9 @@ pub async fn profile(state: Arc<AppState>, session: Arc<Session>) -> impl IntoHa
   let honor: i64 = row.get(3);
   let last_used: Option<DateTime<Utc>> = row.get(4);
   let last_used = last_used.unwrap_or_else(Utc::now);
+  let rank: Option<i32> = row.get(5);
+  let members: i64 = row.get(6);
+  let crowns: i64 = row.get(7);
 
   Ok(Signed(
     Profile {
@@ -89,13 +96,13 @@ pub async fn profile(state: Arc<AppState>, session: Arc<Session>) -> impl IntoHa
       honor_id: honor,
       display_play_data: vec![
         // "Player rank"
-        DisplayPlayData::new(1, 2, 1),
+        DisplayPlayData::new(1, rank.unwrap_or(1) as i64, 1),
         // "Character gallery characters"
-        DisplayPlayData::new(4, 14, 1),
+        DisplayPlayData::new(4, members, 1),
         // "Party power"
         DisplayPlayData::new(2, -1, 1),
         // "Total crowns earned"
-        DisplayPlayData::new(3, 3, 1),
+        DisplayPlayData::new(3, crowns, 1),
         // "Latest login", clamped at 1 month at the client
         DisplayPlayData::new(5, last_used.timestamp(), 1),
         // "Arena ranking": -2 - calculating ranking, -1 - unranked, 0 - hide, 1+ - rank
@@ -207,11 +214,16 @@ impl HonorItem {
   }
 }
 
-pub async fn honor_list(session: Arc<Session>) -> impl IntoHandlerResponse {
+pub async fn honor_list(state: Arc<AppState>, session: Arc<Session>) -> impl IntoHandlerResponse {
   let masters = get_masters().await;
   let honors: Vec<Value> = serde_json::from_str(&masters["honor"].master_decompressed).unwrap();
 
-  let selected_honor_id = 62010250;
+  // The title chosen with honor_set (same one the profile shows)
+  let client = state.get_database_client().await?;
+  #[rustfmt::skip]
+  let selected_honor_id = client.query_one(/* language=postgresql */ r#"
+    select honor from users where id = $1
+  "#, &[&session.user_id]).await.context("failed to read title")?.get::<_, i64>(0) as u32;
 
   Ok(Signed(
     HonorList {
