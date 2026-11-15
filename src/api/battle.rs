@@ -667,9 +667,12 @@ pub async fn marathon_single_result(
   session: Arc<Session>,
   Params(params): Params<MarathonSingleResultRequest>,
 ) -> impl IntoHandlerResponse {
-  warn!(?params, "encountered stub: marathon_single_result");
-
   let client = state.pool.get().await.context("failed to get database connection")?;
+  // Defeats count for the event's boss missions and the boss list
+  if params.win != 0 {
+    crate::api::quest::progress::record_quest(&client, session.user_id, params.quest_id, 1, [false; 3]).await?;
+    info!(quest_id = params.quest_id, event_id = params.event_id, "event boss defeated");
+  }
   let party = crate::api::battle::fetch_battle_party(&client, session.user_id, params.party_id as i64).await?;
 
   // Boss stages have no affinity reward in the masters
