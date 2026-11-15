@@ -101,6 +101,9 @@ impl<'a> UpdateItemCountBy<'a> {
     let item = item.into_item_reference();
     let item_type: i32 = item.item_type.into();
     let item_id: i64 = item.item_id;
+    if matches!(item_type, 1 | 2 | 3 | 9) {
+      tracing::warn!(item_type, item_id, delta, "wallet value written as an item; it belongs in user_wallet");
+    }
     let row = self
       .executor
       .client()

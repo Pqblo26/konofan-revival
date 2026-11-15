@@ -76,6 +76,21 @@ impl Wallet {
     client.execute(/* language=postgresql */ r#"
       insert into user_wallet (user_id) values ($1) on conflict (user_id) do nothing
     "#, &[&user_id]).await.context("failed to create wallet")?;
+    // Eris, gems and stamina belong here only: rows of them that ended up in user_items (some
+    // older reward paths wrote them there) are moved in, otherwise the login counted them twice
+    #[rustfmt::skip]
+    client.execute(/* language=postgresql */ r#"
+      with moved as (
+        delete from user_items where user_id = $1 and item_type in (1, 2, 3, 9) and quantity > 0
+        returning item_type, quantity
+      )
+      update user_wallet set
+        money = money + coalesce((select sum(quantity) from moved where item_type = 1), 0),
+        real_money = real_money + coalesce((select sum(quantity) from moved where item_type = 2), 0)::int,
+        real_money_free = real_money_free + coalesce((select sum(quantity) from moved where item_type = 3), 0)::int,
+        stamina = stamina + coalesce((select sum(quantity) from moved where item_type = 9), 0)::int
+      where user_id = $1 and exists (select 1 from moved)
+    "#, &[&user_id]).await.context("failed to move wallet items")?;
     #[rustfmt::skip]
     let row = client.query_one(/* language=postgresql */ r#"
       select w.money, w.real_money, w.real_money_free, w.stamina, w.stamina_updated_at, coalesce(p.rank, 1)
