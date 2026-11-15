@@ -294,7 +294,7 @@ pub struct MarathonStageList {
 #[derive(Debug, Serialize)]
 pub struct MarathonStageQuest {
   pub quest_id: i32,
-  /// 0 - locked, 1 - unlocked, 2 - completed, 3 - 100% completed
+  /// 0 - new, 1 - played, 2 - completed, 3 - 100% completed (locked stages are not listed)
   pub status: i32,
   pub task1: i32,
   pub task2: i32,
@@ -324,21 +324,18 @@ pub async fn marathon_stage_list(
     .get_master("event_marathon_quest_stage")
     .iter()
     .filter(|quest| quest["event_id"].as_str() == Some(event_id.as_str()))
+    // Locked stages are left out, as in the main quest list
+    .filter(|quest| {
+      stage_info(mission_progress::int(quest, "id")).is_none_or(|stage| stage_unlocked(stage, &progress, now))
+    })
     .map(|quest| {
       let quest_id = mission_progress::int(quest, "id");
       let entry = progress.get(&quest_id);
-      let unlocked = stage_info(quest_id).is_none_or(|stage| stage_unlocked(stage, &progress, now));
       let tasks = entry.map(|entry| entry.tasks).unwrap_or_default();
       MarathonStageQuest {
         quest_id,
-        // 0 locked, 1 unlocked, 2 cleared, 3 cleared with all crowns
-        status: match entry {
-          _ if !unlocked => 0,
-          Some(entry) if entry.clear_count > 0 => {
-            if entry.tasks.iter().all(|task| *task) { 3 } else { 2 }
-          }
-          _ => 1,
-        },
+        // 0 new, 1 played, 2 cleared, 3 cleared with all crowns
+        status: crate::api::quest::progress::quest_status(entry),
         task1: tasks[0] as i32,
         task2: tasks[1] as i32,
         task3: tasks[2] as i32,
