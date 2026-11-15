@@ -192,14 +192,15 @@ impl MissionState {
       "player_home_chara" => (self.counter("home_chara").total > 0) as i32,
       // Event missions (master `event_mission`)
       "event_battle_count_unique" => self.progress.get(&y).is_some_and(|progress| progress.clear_count > 0) as i32,
+      // "Clear all": the client shows them as 1/1 with any value above 0, so 1 only once every
+      // stage of that difficulty is cleared (with all crowns for the perfect ones)
       "event_battle_normal" | "event_battle_hard" => event_stages(mission)
         .iter()
-        .filter(|id| self.progress.get(id).is_some_and(|progress| progress.clear_count > 0))
-        .count() as i32,
+        .all(|id| self.progress.get(id).is_some_and(|progress| progress.clear_count > 0)) as i32,
       "event_battle_normal_perfect" | "event_battle_hard_perfect" => event_stages(mission)
         .iter()
-        .filter(|id| self.progress.get(id).is_some_and(|progress| progress.tasks.iter().all(|task| *task)))
-        .count() as i32,
+        .all(|id| self.progress.get(id).is_some_and(|progress| progress.tasks.iter().all(|task| *task)))
+        as i32,
       _ => 0,
     }
   }
@@ -259,9 +260,7 @@ pub fn target(mission: &Value) -> Option<i32> {
       )
     }
     "all_beginner" => Some(1),
-    "event_battle_normal" | "event_battle_hard" | "event_battle_normal_perfect" | "event_battle_hard_perfect" => {
-      Some(event_stages(mission).len() as i32)
-    }
+    "event_battle_normal" | "event_battle_hard" | "event_battle_normal_perfect" | "event_battle_hard_perfect" => Some(1),
     "time" => Some(1),
     _ => Some(int(mission, "rule_x")).filter(|x| *x > 0),
   }
