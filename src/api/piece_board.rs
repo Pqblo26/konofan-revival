@@ -74,8 +74,7 @@ pub async fn released_board_stages<'a>(
   Ok(released)
 }
 
-/// Last released stage of each board, in board order (0 when none): what the client keeps as
-/// `character_piece_board_stage_id_list` and shows in the board list.
+/// Last released stage of each board, in board order (0 when none), for the board list.
 pub fn last_stage_per_board(character_id: i64, released: &[i64]) -> Vec<(i64, i64)> {
   boards_of(character_id)
     .into_iter()
@@ -91,8 +90,12 @@ pub fn last_stage_per_board(character_id: i64, released: &[i64]) -> Vec<(i64, i6
     .collect()
 }
 
-pub fn stage_id_list(character_id: i64, released: &[i64]) -> Vec<i32> {
-  last_stage_per_board(character_id, released).into_iter().map(|(_, stage_id)| stage_id as i32).collect()
+/// `character_piece_board_stage_id_list`: every released stage, empty when none (as the original
+/// server sent). Zeros here (one per board) left every battle loading forever.
+pub fn stage_id_list(_character_id: i64, released: &[i64]) -> Vec<i32> {
+  let mut list: Vec<i32> = released.iter().map(|&stage_id| stage_id as i32).collect();
+  list.sort();
+  list
 }
 
 // See [Wonder_Api_CharacterPieceBoardInfoResponseDto_Fields]
