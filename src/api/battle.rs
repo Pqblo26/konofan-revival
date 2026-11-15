@@ -158,30 +158,42 @@ pub async fn make_battle_start(
     Some((quest_id, ratio)) => pay_quest_stamina(&client, session, quest_id, ratio).await?,
     None => Vec::new(),
   };
-  let party = crate::api::battle::fetch_battle_party(&client, session.user_id, party_id as i64).await?;
-
-  // We must send only members that are used in the party, otherwise hardlock occurs
-  #[rustfmt::skip]
-  let mut members = FetchUserMembersIn::new(&client)
-    .await?
-    .run(session.user_id, &party.member_ids())
-    .await?;
-  FetchUserMemberSkillsIn::new(&client)
-    .await?
-    .run(session.user_id, &mut members.iter_mut().collect::<Vec<_>>())
-    .await?;
+  let (party, members) = battle_party_members(&client, session.user_id, party_id as i64).await?;
 
   // The quest's own lots (quest_chest) left every battle loading forever; these always work
   let mut response = CallResponse::new_success(Box::new(BattleStartResponse {
     chest: FALLBACK_CHEST.to_owned(),
-    party: party.to_battle_party(),
-    members: members
-      .into_iter()
-      .filter_map(|member| Some(member.to_battle_member(party.form_of(member.id)?)))
-      .collect(),
+    party,
+    members,
   }));
   response.remote.extend(stamina_remote);
   Ok(Unsigned(response))
+}
+
+/// A party and its members as a battle start sends them.
+pub async fn battle_party_members(
+  client: &deadpool_postgres::Client,
+  user_id: crate::user::id::UserId,
+  party_id: i64,
+) -> anyhow::Result<(BattleParty, Vec<BattleMember>)> {
+  let party = fetch_battle_party(client, user_id, party_id).await?;
+
+  // We must send only members that are used in the party, otherwise hardlock occurs
+  #[rustfmt::skip]
+  let mut members = FetchUserMembersIn::new(client)
+    .await?
+    .run(user_id, &party.member_ids())
+    .await?;
+  FetchUserMemberSkillsIn::new(client)
+    .await?
+    .run(user_id, &mut members.iter_mut().collect::<Vec<_>>())
+    .await?;
+
+  let members = members
+    .into_iter()
+    .filter_map(|member| Some(member.to_battle_member(party.form_of(member.id)?)))
+    .collect();
+  Ok((party.to_battle_party(), members))
 }
 
 /// A party as it fights: without the slots the player's rank has not unlocked yet.
