@@ -96,6 +96,8 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
   - Potential Blessing: tableros reales y desbloqueo con fragmentos (`character_piece_board_release`, tabla `user_character_piece_board`; el cuerpo de la petición aún no se ha visto) (#41).
   - **Ojo:** `character_piece_board_stage_id_list` del login debe ir vacía cuando no hay nada desbloqueado. Con un 0 por tablero se colgaban todos los combates en «Now Loading…» (#45). Mandar en `chest` los lotes propios de cada misión también los colgaba: se deja `10101111,10101120,10101131` (#43, #44).
   - Evento 24011: las fases usan el progreso real y salen bloqueadas hasta superar la anterior; las misiones son las del evento y se pueden recoger; el canje tiene fechas actuales (#42, #43). Las de «superar todas» solo cuentan con todas superadas (#46).
+  - Jefe del evento: las victorias cuentan para su lista y sus misiones (#47), y la información del evento da las derrotas reales (#49). El login ya no regala 600 tickets de jefe falsos: se ven los de la base de datos (#48).
+  - El cartel de misión recomendada del evento («Defeat the boss 100 times!») sale con el sello Done sin ninguna derrota. El cliente lo calcula solo con el maestro `event_mission_recommend` y sus datos de misiones (ninguna respuesta lleva ese estado); la misión 52401145 sí llega en `mission`, pero en cadena (`enabled_id`). Sin resolver; es solo visual.
 - **Instalación local en Windows** (rama `instalacion-windows-mumu`): `scripts/konofan/setup-wsl.sh`, `scripts/konofan/mirror-assets.sh` y la guía [docs/konofan/INSTALAR-WINDOWS-MUMU.md](docs/konofan/INSTALAR-WINDOWS-MUMU.md). Probado de punta a punta en Ubuntu 24.04 (PostgreSQL 16, nginx, TLS), sin el juego.
 
 ## Qué falta
@@ -109,9 +111,8 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
 - El gacha no cobra gemas/tickets (`money_type` se ignora).
 - Los banners están escritos a mano en `gacha_info()` (`src/api/gacha.rs`); hay que pasarlos a la base de datos para poder editarlos.
 - Endpoints todavía en stub (~100 avisos `encountered stub` en el código): sorteo de eventos, compras que fallan por el cliente, vincular cuenta, etc.
-- Trial of the Ancients (`character_enhance_multi_release` no existe: Connection Error) y Potential Blessing (`character_piece_board_info` en stub).
 - Eventos sorpresa de ramas (branch): en stub, con equipo equivocado y la puntuación dada como gemas.
-- Misiones: «Accept All» no envía nada y la pestaña Daily sale vacía. Room Invitation y Transfer ID en stub. Party Power sale N/A en el perfil.
+- Misiones: «Accept All» no envía nada. Room Invitation y Transfer ID en stub. Party Power sale N/A en el perfil.
 - Herramientas propias: **panel web** (Pablo lo quiere) para ver jugadores, tiradas y registros, y editar banners, probabilidades, eventos y personajes.
 
 ## Fallos encontrados jugando (2026-11-12)
