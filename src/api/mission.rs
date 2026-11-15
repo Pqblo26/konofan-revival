@@ -186,11 +186,35 @@ pub struct BattleMarathonInfoRequest {
   pub event_id: i32,
 }
 
+/// Boss defeats of an event (single and multi boss stages). This server has one player, so the
+/// total is the player's own count. Boss count rewards (`event_boss_count`) are not sent yet.
+async fn total_boss_info(state: &AppState, session: &Session, event_id: i32) -> anyhow::Result<TotalBossInfo> {
+  let client = state.get_database_client().await?;
+  let progress = crate::api::quest::progress::load_progress(&client, session.user_id).await?;
+  let event_id = event_id.to_string();
+  let defeats: i32 = ["event_marathon_quest_stage_boss_single", "event_marathon_quest_stage_boss_multi"]
+    .into_iter()
+    .flat_map(|master| get_master_manager().get_master(master).iter())
+    .filter(|boss| boss["event_id"].as_str() == Some(event_id.as_str()))
+    .filter_map(|boss| boss["id"].as_str().and_then(|id| id.parse::<i32>().ok()))
+    .map(|quest_id| progress.get(&quest_id).map_or(0, |progress| progress.clear_count))
+    .sum();
+  Ok(TotalBossInfo {
+    total_defeat_count: defeats,
+    my_defeat_count: defeats,
+    boss_count_rewards: vec![],
+    ranking: 0,
+    in_ranking_period: false,
+  })
+}
+
 pub async fn battle_marathon_info(
+  state: Arc<AppState>,
   session: Arc<Session>,
   Params(params): Params<BattleMarathonInfoRequest>,
 ) -> impl IntoHandlerResponse {
   warn!(?params, "encountered stub: battle_marathon_info");
+  let total_boss_info = total_boss_info(&state, &session, params.event_id).await?;
 
   Ok(Signed(
     BattleMarathonInfo {
@@ -200,13 +224,7 @@ pub async fn battle_marathon_info(
         status: 0,
         kill: 0,
       },
-      total_boss_info: TotalBossInfo {
-        total_defeat_count: 0,
-        my_defeat_count: 0,
-        boss_count_rewards: vec![],
-        ranking: 0,
-        in_ranking_period: false,
-      },
+      total_boss_info,
     },
     session,
   ))
@@ -254,23 +272,19 @@ pub struct MarathonInfoRequest {
 }
 
 pub async fn marathon_info(
+  state: Arc<AppState>,
   session: Arc<Session>,
   Params(params): Params<MarathonInfoRequest>,
 ) -> impl IntoHandlerResponse {
-  warn!(?params, "encountered stub: marathon_info");
+  info!(?params, "marathon_info");
+  let total_boss_info = total_boss_info(&state, &session, params.event_id).await?;
   Ok(Signed(
     MarathonInfo {
       opflag: 0,
       boss: 1,
       open_scorechallenge: true,
       multi_battle_invitation: None,
-      total_boss_info: TotalBossInfo {
-        total_defeat_count: 0,
-        my_defeat_count: 0,
-        boss_count_rewards: vec![],
-        ranking: 0,
-        in_ranking_period: false,
-      },
+      total_boss_info,
       emergency_boss_info: EmergencyBossInfo {
         emergency_boss_id: 0,
         status: 0,
