@@ -84,6 +84,12 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
   - Misiones (Novice, Regular, Daily): progreso real calculado desde lo guardado (misiones, capítulos, coronas, rango, miembros) y contadores nuevos (días de login, tiradas, trabajos, Arena) en `user_mission_counters`. Recoger (`missionget`) da el pack de la misión y la guarda en `user_missions` (las diarias se renuevan cada día, hora de Japón). Migración `20261114000002`.
   - Pendiente en Misiones: «Accept All» no envía nada y la pestaña Daily sale vacía. Las de evento salen sin progreso.
   - La Tienda se queda en «Now Loading…»: igual que el + de gemas, el juego espera a Google Play Billing (`queryProductDetailsAsync` nunca responde) y no llega a pedir `shopitemlist`. No es del servidor.
+- **Undécima tanda: repaso de Story, Team, Smithy y Menu** (2026-11-14 y 15, Claude juega por adb):
+  - Misiones: «Clear all Novice» ya no sale completada antes de tiempo, y visitar el personaje de Home cuenta (#31). `missiongetall` recoge todo lo completado respetando las cadenas `enabled_id` (#32), aunque el botón «Accept All» del juego sigue sin enviar la petición.
+  - Team, «Use Reserves»: subir habilidades con duplicados los gasta de verdad de la reserva (`member_skill_up`, #33).
+  - Herrería (#34, #35, #37): las mejoras cobran materiales y Eris según `equip_*_details`, gastan las armas usadas como material, y ahora el Eris baja en pantalla al momento. La venta (`sale`) funciona con armas y con materiales. La fabricación (`blacksmith`) cobra el coste, pero falta probarla en el juego (no hay materiales).
+  - Perfil: rango, miembros y coronas reales, y el título elegido se guarda (#36).
+  - Story revisado: todo bien salvo el banner del evento 24041 (404 en el espejo).
 - **Instalación local en Windows** (rama `instalacion-windows-mumu`): `scripts/konofan/setup-wsl.sh`, `scripts/konofan/mirror-assets.sh` y la guía [docs/konofan/INSTALAR-WINDOWS-MUMU.md](docs/konofan/INSTALAR-WINDOWS-MUMU.md). Probado de punta a punta en Ubuntu 24.04 (PostgreSQL 16, nginx, TLS), sin el juego.
 
 ## Qué falta
@@ -97,6 +103,9 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
 - El gacha no cobra gemas/tickets (`money_type` se ignora).
 - Los banners están escritos a mano en `gacha_info()` (`src/api/gacha.rs`); hay que pasarlos a la base de datos para poder editarlos.
 - Endpoints todavía en stub (~100 avisos `encountered stub` en el código): sorteo de eventos, compras que fallan por el cliente, vincular cuenta, etc.
+- Trial of the Ancients (`character_enhance_multi_release` no existe: Connection Error) y Potential Blessing (`character_piece_board_info` en stub).
+- Eventos sorpresa de ramas (branch): en stub, con equipo equivocado y la puntuación dada como gemas.
+- Misiones: «Accept All» no envía nada y la pestaña Daily sale vacía. Room Invitation y Transfer ID en stub. Party Power sale N/A en el perfil.
 - Herramientas propias: **panel web** (Pablo lo quiere) para ver jugadores, tiradas y registros, y editar banners, probabilidades, eventos y personajes.
 
 ## Fallos encontrados jugando (2026-11-12)
