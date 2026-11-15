@@ -140,6 +140,43 @@ pub async fn pay_quest_money(
 }
 
 /// [stamina]: quest id and stamina multiplier to charge, if the battle costs stamina.
+/// Main quest 1-1's lots, used when a quest's waves are not found.
+const FALLBACK_CHEST: &str = "10101111,10101120,10101131";
+
+/// One reward lot (`questreward_id_normal` or `_rare`, by their weights in `battle_wave`) per wave
+/// of the quest, comma separated: the game looks them up in the quest's reward master, so lots of
+/// another quest (they were always main quest 1-1's) leave event battles loading forever.
+pub fn quest_chest(quest_id: i32) -> String {
+  let id = quest_id.to_string();
+  let masters = get_master_manager();
+  let stage = [
+    ("mainquest_stage", "id"),
+    ("huntingquest_stage", "id"),
+    ("event_quest_stage", "id"),
+    ("event_marathon_quest_stage", "id"),
+    ("fame_quest_stage", "fame_quest_id"),
+  ]
+  .iter()
+  .find_map(|(master, column)| masters.get_master(master).iter().find(|row| row[*column].as_str() == Some(id.as_str())));
+  let Some(stage) = stage else {
+    return FALLBACK_CHEST.to_owned();
+  };
+  let waves = masters.get_master("battle_wave");
+  let int = |row: &serde_json::Value, key: &str| row[key].as_str().and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+  let lots = (1..=5)
+    .filter_map(|n| stage[format!("wave_id{n}")].as_str().filter(|wave| *wave != "0"))
+    .filter_map(|wave_id| waves.iter().find(|row| row["wave_id"].as_str() == Some(wave_id)))
+    .map(|wave| {
+      let (normal, rare) = (int(wave, "questreward_id_normal"), int(wave, "questreward_id_rare"));
+      let (normal_weight, rare_weight) = (int(wave, "weight_normal").max(0), int(wave, "weight_rare").max(0));
+      let rare_wins =
+        rare != 0 && (normal == 0 || rand::random_range(0..(normal_weight + rare_weight).max(1)) >= normal_weight);
+      (if rare_wins { rare } else { normal }).to_string()
+    })
+    .collect::<Vec<_>>();
+  if lots.is_empty() { FALLBACK_CHEST.to_owned() } else { lots.join(",") }
+}
+
 pub async fn make_battle_start(
   state: &AppState,
   session: &Session,
@@ -167,8 +204,9 @@ pub async fn make_battle_start(
     .run(session.user_id, &mut members.iter_mut().collect::<Vec<_>>())
     .await?;
 
+  let chest = stamina.map(|(quest_id, _)| quest_chest(quest_id)).unwrap_or_else(|| FALLBACK_CHEST.to_owned());
   let mut response = CallResponse::new_success(Box::new(BattleStartResponse {
-    chest: "10101111,10101120,10101131".to_owned(),
+    chest,
     party: party.to_battle_party(),
     members: members
       .into_iter()
