@@ -16,6 +16,7 @@ pub mod battle_multi;
 pub mod capture;
 pub mod character;
 pub mod character_enhance;
+pub mod piece_board;
 pub mod dungeon;
 pub mod exchange;
 pub mod expedition;

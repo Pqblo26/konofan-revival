@@ -93,7 +93,7 @@ pub async fn get_login_remote_data(state: &AppState, session: &Session) -> Vec<R
           rank_progress: intimacy,
           sp_skill: vec![],
           character_enhance_stage_id_list: vec![0, 0, 0, 0],
-          character_piece_board_stage_id_list: vec![100001001, 100002002, 100003003, 100004004],
+          character_piece_board_stage_id_list: crate::api::piece_board::stage_id_list(character_id, &[]),
           is_trial: false,
         }
       });
@@ -119,7 +119,12 @@ pub async fn get_login_remote_data(state: &AppState, session: &Session) -> Vec<R
     }
 
     let released = crate::api::character_enhance::released_stages(&client, session.user_id).await.unwrap();
+    let board_released = crate::api::piece_board::released_board_stages(&client, session.user_id).await.unwrap();
     for character in map.values_mut() {
+      if let Some(stages) = board_released.get(&character.character_id) {
+        character.character_piece_board_stage_id_list =
+          crate::api::piece_board::stage_id_list(character.character_id, stages);
+      }
       if let Some(stages) = released.get(&character.character_id) {
         character.character_enhance_stage_id_list =
           crate::api::character_enhance::stage_id_list(character.character_id, stages);
