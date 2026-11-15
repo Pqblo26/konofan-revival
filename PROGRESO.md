@@ -90,6 +90,12 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
   - Herrería (#34, #35, #37): las mejoras cobran materiales y Eris según `equip_*_details`, gastan las armas usadas como material, y ahora el Eris baja en pantalla al momento. La venta (`sale`) funciona con armas y con materiales. La fabricación (`blacksmith`) cobra el coste, pero falta probarla en el juego (no hay materiales).
   - Perfil: rango, miembros y coronas reales, y el título elegido se guarda (#36).
   - Story revisado: todo bien salvo el banner del evento 24041 (404 en el espejo).
+- **Duodécima tanda: Trial, Potential Blessing y evento de Año Nuevo** (2026-11-15):
+  - Eris: una fila suelta de Eris en `user_items` hacía que el juego mostrara 50.000 más; `Wallet::load` mueve esas filas (Eris, gemas, estamina) al monedero (#39). Las mejoras de la Herrería descuentan el Eris al momento (#37).
+  - Trial of the Ancients: costes y estadísticas reales por fase y desbloqueo (`character_enhance_multi_release`, tabla `user_character_enhance`) (#40). Falta probar un desbloqueo en el juego y ver si las estadísticas cuentan en combate.
+  - Potential Blessing: tableros reales y desbloqueo con fragmentos (`character_piece_board_release`, tabla `user_character_piece_board`; el cuerpo de la petición aún no se ha visto) (#41).
+  - **Ojo:** `character_piece_board_stage_id_list` del login debe ir vacía cuando no hay nada desbloqueado. Con un 0 por tablero se colgaban todos los combates en «Now Loading…» (#45). Mandar en `chest` los lotes propios de cada misión también los colgaba: se deja `10101111,10101120,10101131` (#43, #44).
+  - Evento 24011: las fases usan el progreso real y salen bloqueadas hasta superar la anterior; las misiones son las del evento y se pueden recoger; el canje tiene fechas actuales (#42, #43). Las de «superar todas» solo cuentan con todas superadas (#46).
 - **Instalación local en Windows** (rama `instalacion-windows-mumu`): `scripts/konofan/setup-wsl.sh`, `scripts/konofan/mirror-assets.sh` y la guía [docs/konofan/INSTALAR-WINDOWS-MUMU.md](docs/konofan/INSTALAR-WINDOWS-MUMU.md). Probado de punta a punta en Ubuntu 24.04 (PostgreSQL 16, nginx, TLS), sin el juego.
 
 ## Qué falta
