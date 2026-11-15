@@ -202,6 +202,7 @@ async fn api_call(
     .handle("exchange", exchange::exchange)
     .handle("character_piece_board_info", character::character_piece_board_info)
     .handle("character_enhance_info", character::character_enhance_info)
+    .handle("character_enhance_multi_release", crate::api::character_enhance::character_enhance_multi_release)
     .handle("idconfirm", transfer::id_confirm)
     .handle("prepare_set_migration", transfer::prepare_set_migration)
     .handle("newidcheck", transfer::new_id_check)

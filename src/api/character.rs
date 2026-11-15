@@ -128,41 +128,43 @@ pub struct CharacterEnhanceInfoRequest {
 }
 
 // Thanks to https://youtu.be/o5UUz2kHhto for unbricking this endpoint
+/// Every stage of the character with what it gives and costs (master `character_enhance`).
 pub async fn character_enhance_info(Params(params): Params<CharacterEnhanceInfoRequest>) -> impl IntoHandlerResponse {
-  warn!(?params, "encountered stub: character_enhance_info");
-
-  let masters = get_masters().await;
-  let trials: Vec<Value> = serde_json::from_str(&masters["character_enhance"].master_decompressed).unwrap();
-  let trials = trials
-    .iter()
-    .filter(|trial| trial["character_id"].as_str().unwrap().parse::<i32>().unwrap() == params.character_id)
-    .collect::<Vec<_>>();
-
+  use crate::api::character_enhance::{int, stage_cost, stages_of};
+  let stages = stages_of(params.character_id as i64);
   Ok(Unsigned(CharacterEnhanceInfo {
-    progress: trials
+    progress: stages
       .iter()
-      .map(|trial| CharacterEnhanceInfoProgress {
-        root_id: trial["root_id"].as_str().unwrap().parse().unwrap(),
-        root_stage_id: trial["root_stage_id"].as_str().unwrap().parse().unwrap(),
-        stage_id: trial["stage_id"].as_str().unwrap().parse().unwrap(),
-        parameter: EnhanceParameter {
-          hp: 100,
-          attack: 50,
-          magicattack: 50,
-          defense: 30,
-          magicdefence: 30,
-          agility: 20,
-          dexterity: 20,
-          luck: 10,
-        },
-        unique_weapon_id: 0,
-        specialskill: vec![],
-        unique_stone: EnhanceUniqueStone {
-          unique_stone_id: 0,
-          unique_stone_lv: 0,
-        },
-        material_items: vec![],
-        money: 1000,
+      .map(|row| {
+        let (materials, money) = stage_cost(row);
+        let stat = |key: &str| int(row, key) as i32;
+        CharacterEnhanceInfoProgress {
+          root_id: stat("root_id"),
+          root_stage_id: stat("root_stage_id"),
+          stage_id: stat("stage_id"),
+          parameter: EnhanceParameter {
+            hp: stat("hp"),
+            attack: stat("attack"),
+            magicattack: stat("magicattack"),
+            defense: stat("defense"),
+            magicdefence: stat("magicdefence"),
+            agility: stat("agility"),
+            dexterity: stat("dexterity"),
+            luck: stat("luck"),
+          },
+          unique_weapon_id: int(row, "unique_weapon_id"),
+          specialskill: if int(row, "sp_id") != 0 {
+            vec![EnhanceSpecialSkill { sp_id: int(row, "sp_id"), sp_group_id: int(row, "sp_group_id"), sp_lv: stat("sp_lv") }]
+          } else {
+            vec![]
+          },
+          unique_stone: EnhanceUniqueStone { unique_stone_id: int(row, "unique_stone_id"), unique_stone_lv: 0 },
+          material_items: materials
+            .into_iter()
+            .map(|(item_type, item_id, item_num)| CharacterEnhanceMaterial { item_type, item_id, item_num })
+            .collect(),
+          money: money as i32,
+        }
       })
       .collect(),
     trial_timestamp: chrono::Utc::now().timestamp(),
