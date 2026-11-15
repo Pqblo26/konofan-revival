@@ -212,6 +212,23 @@ async fn patch_master(name: &str, value: &mut Value) {
         }
       }
     }
+    // Branch cards: with every stock limit period over, they showed "Occurrences 15/" with no
+    // maximum and a negative "Next" time. One current period whose limit is every Branch event
+    // (the 15 rows of `surprise_event`, all listed by surprise_mini_event_select).
+    "surprise_event_stock_limit" => {
+      info!("patching surprise_event_stock_limit");
+      let events = 15;
+      if let Some(array) = value.as_array_mut() {
+        if let Some(mut last) = array.last().cloned() {
+          if let Some(item) = last.as_object_mut() {
+            item.insert("limit".to_owned(), Value::String(events.to_string()));
+            item.insert("start_at".to_owned(), Value::String(start_at.format("%Y/%m/%d %H:%M:%S").to_string()));
+            item.insert("end_at".to_owned(), Value::String(end_at.format("%Y/%m/%d %H:%M:%S").to_string()));
+          }
+          array.push(last);
+        }
+      }
+    }
     // jq '.[]' text.json -c -C | grep -i 'new year' | grep -i 'area'
     "event_config" => {
       info!("patching event_config");
