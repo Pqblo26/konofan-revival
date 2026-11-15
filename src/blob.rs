@@ -118,6 +118,14 @@ pub async fn get_login_remote_data(state: &AppState, session: &Session) -> Vec<R
       }
     }
 
+    let released = crate::api::character_enhance::released_stages(&client, session.user_id).await.unwrap();
+    for character in map.values_mut() {
+      if let Some(stages) = released.get(&character.character_id) {
+        character.character_enhance_stage_id_list =
+          crate::api::character_enhance::stage_id_list(character.character_id, stages);
+      }
+    }
+
     map
       .into_values()
       .map(|character| AddCharacter::new(character.character_id as i32, character).into_remote_data())
