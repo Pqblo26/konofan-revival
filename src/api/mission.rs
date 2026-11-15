@@ -59,7 +59,7 @@ pub struct MissionListRequest {
 
 /// The Missions screen list: Normal, Daily and Beginner missions with their progress, then
 /// event missions (no progress yet).
-fn mission_entries(progress: &MissionState, missions: &[Value], event_missions: &[Value]) -> Vec<Mission> {
+fn mission_entries(progress: &MissionState, missions: &[Value], event_missions: &[&Value]) -> Vec<Mission> {
   let kind_of = |mission: &Value| match mission["mission_type"].as_str().unwrap_or("") {
     "DAILY" => MissionKind::Daily as i32,
     "BEGINNER" => MissionKind::Beginner as i32,
@@ -77,12 +77,12 @@ fn mission_entries(progress: &MissionState, missions: &[Value], event_missions: 
       is_challenge: 1,
     })
     .collect::<Vec<_>>();
-  // Event missions have no progress yet
-  list.extend(event_missions.iter().take(100).map(|mission| Mission {
+  // Missions of the running event, shown in its own list
+  list.extend(event_missions.iter().map(|mission| Mission {
     mission_id: mission_progress::int(mission, "mission_id"),
-    kind: kind_of(mission),
-    progress: 0,
-    received: 0,
+    kind: MissionKind::Event as i32,
+    progress: progress.progress(mission),
+    received: progress.is_received(mission) as i32,
     newmisson: 0,
     is_challenge: 1,
   }));
@@ -99,7 +99,7 @@ pub async fn mission_list(
 
   let masters = get_masters().await;
   let missions: Vec<Value> = serde_json::from_str(&masters["mission"].master_decompressed).unwrap();
-  let event_missions: Vec<Value> = serde_json::from_str(&masters["event_mission"].master_decompressed).unwrap();
+  let event_missions = mission_progress::active_event_missions();
 
   let list = mission_entries(&progress, &missions, &event_missions);
   let receivable = missions
@@ -310,24 +310,40 @@ pub struct MarathonStageListRequest {
 }
 
 pub async fn marathon_stage_list(
+  state: Arc<AppState>,
   session: Arc<Session>,
   Params(params): Params<MarathonStageListRequest>,
 ) -> impl IntoHandlerResponse {
-  warn!(?params, "encountered stub: marathon_stage_list");
-
-  let masters = get_masters().await;
-  let quests: Vec<Value> = serde_json::from_str(&masters["event_marathon_quest_stage"].master_decompressed).unwrap();
-  let quests = quests
-    .into_iter()
-    .filter(|quest| quest.get("event_id").unwrap().as_str().unwrap().parse::<i32>().unwrap() == params.event_id)
-    .map(|quest| MarathonStageQuest {
-      quest_id: quest.get("id").unwrap().as_str().unwrap().parse::<i32>().unwrap(),
-      status: 3,
-      // Missions done: all three crowns gold, which is also what lets the stage be skipped
-      task1: 1,
-      task2: 1,
-      task3: 1,
-      hardnum: 0,
+  use crate::api::quest::progress::{load_progress, stage_unlocked};
+  use crate::api::quest::stage::stage_info;
+  let client = state.get_database_client().await?;
+  let progress = load_progress(&client, session.user_id).await?;
+  let now = chrono::Utc::now();
+  let event_id = params.event_id.to_string();
+  let quests = get_master_manager()
+    .get_master("event_marathon_quest_stage")
+    .iter()
+    .filter(|quest| quest["event_id"].as_str() == Some(event_id.as_str()))
+    .map(|quest| {
+      let quest_id = mission_progress::int(quest, "id");
+      let entry = progress.get(&quest_id);
+      let unlocked = stage_info(quest_id).is_none_or(|stage| stage_unlocked(stage, &progress, now));
+      let tasks = entry.map(|entry| entry.tasks).unwrap_or_default();
+      MarathonStageQuest {
+        quest_id,
+        // 0 locked, 1 unlocked, 2 cleared, 3 cleared with all crowns
+        status: match entry {
+          _ if !unlocked => 0,
+          Some(entry) if entry.clear_count > 0 => {
+            if entry.tasks.iter().all(|task| *task) { 3 } else { 2 }
+          }
+          _ => 1,
+        },
+        task1: tasks[0] as i32,
+        task2: tasks[1] as i32,
+        task3: tasks[2] as i32,
+        hardnum: entry.map(|entry| entry.daily_count).unwrap_or(0),
+      }
     })
     .collect::<Vec<_>>();
 
@@ -617,7 +633,7 @@ pub async fn mission_get_all(
   info!(?kind, missions = ?ids, ?items, "missions received (all)");
 
   let progress = MissionState::load(&client, session.user_id).await?;
-  let event_missions: Vec<Value> = serde_json::from_str(&masters["event_mission"].master_decompressed).unwrap();
+  let event_missions = mission_progress::active_event_missions();
   let mut response = CallResponse::new_success(Box::new(MissionGetAllResponse {
     list: mission_entries(&progress, &missions, &event_missions),
     goods_id: items
