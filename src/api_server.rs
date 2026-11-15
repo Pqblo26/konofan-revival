@@ -212,6 +212,7 @@ async fn api_call(
     .handle("presentget", present::present_get)
     .handle("mission", mission::mission_list)
     .handle("missionget", mission::mission_get)
+    .handle("missiongetall", mission::mission_get_all)
     .handle("battlequestinfo", mission::battle_quest_info)
     .handle("battlemarathoninfo", mission::battle_marathon_info)
     .handle("marathon_info", mission::marathon_info)
