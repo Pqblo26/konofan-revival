@@ -458,10 +458,12 @@ pub struct MarathonBossListRequest {
 }
 
 pub async fn marathon_boss_list(
+  state: Arc<AppState>,
   session: Arc<Session>,
   Params(params): Params<MarathonBossListRequest>,
 ) -> impl IntoHandlerResponse {
-  warn!(?params, "encountered stub: marathon_boss_list");
+  let client = state.get_database_client().await?;
+  let progress = crate::api::quest::progress::load_progress(&client, session.user_id).await?;
 
   let bosses = if params.is_multi {
     get_master_manager().get_master("event_marathon_quest_stage_boss_multi")
@@ -471,10 +473,14 @@ pub async fn marathon_boss_list(
   let bosses = bosses
     .into_iter()
     .filter(|boss| boss.get("event_id").unwrap().as_str().unwrap().parse::<i32>().unwrap() == params.event_id)
-    .map(|boss| MarathonBoss {
-      quest_id: boss.get("id").unwrap().as_str().unwrap().parse::<i32>().unwrap(),
-      status: 1,
-      kill: 1,
+    .map(|boss| {
+      let quest_id = boss.get("id").unwrap().as_str().unwrap().parse::<i32>().unwrap();
+      MarathonBoss {
+        quest_id,
+        status: 1,
+        // Defeated at least once
+        kill: progress.get(&quest_id).is_some_and(|progress| progress.clear_count > 0) as i32,
+      }
     })
     .collect::<Vec<_>>();
 

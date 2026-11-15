@@ -192,6 +192,12 @@ impl MissionState {
       "player_home_chara" => (self.counter("home_chara").total > 0) as i32,
       // Event missions (master `event_mission`)
       "event_battle_count_unique" => self.progress.get(&y).is_some_and(|progress| progress.clear_count > 0) as i32,
+      // Single event boss defeats (multi bosses are not played yet)
+      "event_battle_boss_count" => event_boss_stages(mission)
+        .iter()
+        .filter_map(|id| self.progress.get(id))
+        .map(|progress| if is_daily(mission) { progress.daily_count } else { progress.clear_count })
+        .sum(),
       // "Clear all": the client shows them as 1/1 with any value above 0, so 1 only once every
       // stage of that difficulty is cleared (with all crowns for the perfect ones)
       "event_battle_normal" | "event_battle_hard" => event_stages(mission)
@@ -221,6 +227,17 @@ pub fn active_event_missions() -> Vec<&'static Value> {
     .get_master("event_mission")
     .iter()
     .filter(|mission| mission["event_id"].as_str() == Some(crate::api::master_all::ACTIVE_EVENT_ID))
+    .collect()
+}
+
+/// Single boss stages of the mission's event.
+fn event_boss_stages(mission: &Value) -> Vec<i32> {
+  let event_id = mission["event_id"].as_str().unwrap_or("");
+  get_master_manager()
+    .get_master("event_marathon_quest_stage_boss_single")
+    .iter()
+    .filter(|stage| stage["event_id"].as_str() == Some(event_id))
+    .map(|stage| int(stage, "id"))
     .collect()
 }
 
