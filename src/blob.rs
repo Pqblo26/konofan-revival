@@ -169,7 +169,7 @@ pub async fn get_login_remote_data(state: &AppState, session: &Session) -> Vec<R
           item_id,
           quantity
         from user_items
-        where user_id = $1
+        where user_id = $1 and item_type not in (1, 2, 3, 9)
       "#)
       .await
       .context("failed to prepare statement").unwrap();
