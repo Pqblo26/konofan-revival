@@ -120,6 +120,23 @@ pub async fn pay(
   Ok(Some(remote))
 }
 
+/// Remote data that takes `money` Eris off what the client shows (delete lowers by item_num).
+pub fn spend_money(money: i64) -> RemoteData {
+  RemoteData {
+    cmd: RemoteDataCommand::UserParamDelete as i32,
+    uid: None,
+    item_type: RemoteDataItemType::Money.into(),
+    item_id: 0,
+    item_num: money.min(i32::MAX as i64) as i32,
+    uniqid: 0,
+    lv: 0,
+    tag: String::from("-"),
+    member_parameter: None,
+    character_parameter: None,
+    is_trial: None,
+  }
+}
+
 /// Remote data that removes one equipment from the client.
 pub fn delete_equipment(item_type: i32, item_id_details: i64, unique_id: i64) -> RemoteData {
   RemoteData {

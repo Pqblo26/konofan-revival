@@ -163,8 +163,11 @@ pub async fn item_power_up(
     }
   }
   wallet.save(&transaction, session.user_id).await?;
-  // No wallet remote data here: the client takes the Eris off by itself, and with the wallet
-  // values on top it showed 50,000 less until the next login
+  // Only the Eris spent, as a delta: the client does not take it off by itself, and the whole
+  // wallet on top made it show 50,000 less until the next login
+  if money > 0 {
+    paid.push(crate::api::smith_cost::spend_money(money));
+  }
   #[rustfmt::skip]
   let statement = transaction
     .prepare(/* language=postgresql */ r#"
