@@ -96,6 +96,12 @@ impl MissionState {
     Ok(MissionState { progress, rank, members, counters, received, today })
   }
 
+  /// Shown in the list: missions in a chain appear once the previous one (enabled_id) is received.
+  pub fn is_unlocked(&self, mission: &Value) -> bool {
+    let previous = int(mission, "enabled_id");
+    previous == 0 || self.received.contains_key(&previous)
+  }
+
   /// Received (today, for daily missions).
   pub fn is_received(&self, mission: &Value) -> bool {
     self

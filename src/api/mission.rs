@@ -57,18 +57,9 @@ pub struct MissionListRequest {
   pub kind: String,
 }
 
-pub async fn mission_list(
-  state: Arc<AppState>,
-  session: Arc<Session>,
-  Params(params): Params<MissionListRequest>,
-) -> impl IntoHandlerResponse {
-  let client = state.get_database_client().await?;
-  let progress = MissionState::load(&client, session.user_id).await?;
-
-  let masters = get_masters().await;
-  let missions: Vec<Value> = serde_json::from_str(&masters["mission"].master_decompressed).unwrap();
-  let event_missions: Vec<Value> = serde_json::from_str(&masters["event_mission"].master_decompressed).unwrap();
-
+/// The Missions screen list: Normal, Daily and Beginner missions with their progress, then
+/// event missions (no progress yet).
+fn mission_entries(progress: &MissionState, missions: &[Value], event_missions: &[Value]) -> Vec<Mission> {
   let kind_of = |mission: &Value| match mission["mission_type"].as_str().unwrap_or("") {
     "DAILY" => MissionKind::Daily as i32,
     "BEGINNER" => MissionKind::Beginner as i32,
@@ -95,6 +86,22 @@ pub async fn mission_list(
     newmisson: 0,
     is_challenge: 1,
   }));
+  list
+}
+
+pub async fn mission_list(
+  state: Arc<AppState>,
+  session: Arc<Session>,
+  Params(params): Params<MissionListRequest>,
+) -> impl IntoHandlerResponse {
+  let client = state.get_database_client().await?;
+  let progress = MissionState::load(&client, session.user_id).await?;
+
+  let masters = get_masters().await;
+  let missions: Vec<Value> = serde_json::from_str(&masters["mission"].master_decompressed).unwrap();
+  let event_missions: Vec<Value> = serde_json::from_str(&masters["event_mission"].master_decompressed).unwrap();
+
+  let list = mission_entries(&progress, &missions, &event_missions);
   let receivable = missions
     .iter()
     .filter(|mission| !progress.is_received(mission))
@@ -470,6 +477,8 @@ pub struct MissionGetRequest {
 // See [Wonder_Api_MissiongetResponseDto_Fields] (guessed: same goods lists as panel missions)
 #[derive(Debug, Serialize)]
 pub struct MissionGetResponse {
+  #[serde(rename = "missionid")]
+  pub mission_id: i32,
   #[serde(rename = "goodsid")]
   pub goods_id: Vec<crate::api::panel_mission::MissionGood>,
   #[serde(rename = "unreceived_goodsid")]
@@ -480,7 +489,7 @@ impl CallCustom for MissionGetResponse {}
 
 impl MissionGetResponse {
   fn empty() -> Self {
-    MissionGetResponse { goods_id: vec![], unreceived_goods_id: vec![] }
+    MissionGetResponse { mission_id: 0, goods_id: vec![], unreceived_goods_id: vec![] }
   }
 }
 
@@ -499,7 +508,7 @@ pub async fn mission_get(
   let progress = MissionState::load(&client, session.user_id).await?;
   let value = progress.progress(mission);
   let target = mission_progress::target(mission);
-  if progress.is_received(mission) || target.is_some_and(|target| value < target) {
+  if progress.is_received(mission) || !progress.is_unlocked(mission) || target.is_some_and(|target| value < target) {
     warn!(?params, value, ?target, received = progress.is_received(mission), "mission not receivable");
     return Ok(Signed(CallResponse::new_success(Box::new(MissionGetResponse::empty())), session));
   }
@@ -522,11 +531,101 @@ pub async fn mission_get(
   info!(mission_id = params.mission_id, pack_id, ?items, "mission received");
 
   let mut response = CallResponse::new_success(Box::new(MissionGetResponse {
+    mission_id: params.mission_id,
     goods_id: items
       .iter()
       .map(|&(item_type, item_id, item_num)| crate::api::panel_mission::MissionGood { item_type, item_id, item_num })
       .collect(),
     unreceived_goods_id: vec![],
+  }));
+  response.remote.extend(remote);
+  Ok(Signed(response, session))
+}
+
+// See [Wonder_Api_MissiongetallResponseDto_Fields] (field names guessed from the metadata strings)
+#[derive(Debug, Serialize)]
+pub struct MissionGetAllResponse {
+  pub list: Vec<Mission>,
+  #[serde(rename = "goodsid")]
+  pub goods_id: Vec<crate::api::panel_mission::MissionGood>,
+  #[serde(rename = "unreceived_goodsid")]
+  pub unreceived_goods_id: Vec<crate::api::panel_mission::MissionGood>,
+  #[serde(rename = "expired_goodsid")]
+  pub expired_goods_id: Vec<crate::api::panel_mission::MissionGood>,
+}
+
+impl CallCustom for MissionGetAllResponse {}
+
+/// "Accept All": receives every completed mission (of the tab's type, when the request says
+/// which). The request fields are not known yet, so they are read loosely and logged.
+pub async fn mission_get_all(
+  state: Arc<AppState>,
+  request: ApiRequest,
+  session: Arc<Session>,
+) -> impl IntoHandlerResponse {
+  let body = &request.body;
+  info!(?body, "missiongetall");
+  let kind = body.get("type").and_then(|value| value.parse::<i32>().ok()).filter(|kind| *kind > 0);
+
+  let mut client = state.get_database_client().await?;
+  let progress = MissionState::load(&client, session.user_id).await?;
+  let masters = get_masters().await;
+  let missions: Vec<Value> = serde_json::from_str(&masters["mission"].master_decompressed).unwrap();
+  let kind_of = |mission: &Value| match mission["mission_type"].as_str().unwrap_or("") {
+    "DAILY" => MissionKind::Daily as i32,
+    "BEGINNER" => MissionKind::Beginner as i32,
+    _ => MissionKind::Normal as i32,
+  };
+  // The "all" missions go last, once the others count as received
+  let mut ready = missions
+    .iter()
+    .filter(|mission| kind.is_none_or(|kind| kind_of(mission) == kind))
+    .filter(|mission| !progress.is_received(mission) && progress.is_unlocked(mission))
+    .filter(|mission| {
+      mission_progress::target(mission).is_some_and(|target| progress.progress(mission) >= target)
+    })
+    .collect::<Vec<_>>();
+  ready.sort_by_key(|mission| mission["rule"].as_str().is_some_and(|rule| rule.starts_with("all_")));
+
+  let mut items = Vec::new();
+  let mut ids = Vec::new();
+  for mission in &ready {
+    if mission["rule"].as_str().is_some_and(|rule| rule.starts_with("all_")) {
+      // Count it only if the others received now complete it
+      continue;
+    }
+    ids.push(mission_progress::int(mission, "mission_id"));
+    let pack_id = mission["pack_id"].as_str().unwrap_or("0");
+    items.extend(
+      crate::api::exchange::get_pack(pack_id)
+        .map(crate::api::exchange::pack_contents)
+        .unwrap_or_default(),
+    );
+  }
+
+  let transaction = client.transaction().await.context("failed to start transaction")?;
+  let mut wallet = Wallet::load(&transaction, session.user_id).await?;
+  let mut remote = grant_items(&transaction, session.user_id, &mut wallet, &items).await?;
+  #[rustfmt::skip]
+  transaction.execute(/* language=postgresql */ r#"
+    insert into user_missions (user_id, mission_id) select $1, unnest($2::int4[])
+    on conflict (user_id, mission_id) do update set received_at = now()
+  "#, &[&session.user_id, &ids]).await.context("failed to save missions")?;
+  wallet.save(&transaction, session.user_id).await?;
+  transaction.commit().await.context("failed to commit transaction")?;
+  remote.extend(wallet.to_remote_data());
+  info!(?kind, missions = ?ids, ?items, "missions received (all)");
+
+  let progress = MissionState::load(&client, session.user_id).await?;
+  let event_missions: Vec<Value> = serde_json::from_str(&masters["event_mission"].master_decompressed).unwrap();
+  let mut response = CallResponse::new_success(Box::new(MissionGetAllResponse {
+    list: mission_entries(&progress, &missions, &event_missions),
+    goods_id: items
+      .iter()
+      .map(|&(item_type, item_id, item_num)| crate::api::panel_mission::MissionGood { item_type, item_id, item_num })
+      .collect(),
+    unreceived_goods_id: vec![],
+    expired_goods_id: vec![],
   }));
   response.remote.extend(remote);
   Ok(Signed(response, session))
