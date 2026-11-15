@@ -163,7 +163,8 @@ pub async fn item_power_up(
     }
   }
   wallet.save(&transaction, session.user_id).await?;
-  paid.extend(wallet.to_remote_data());
+  // No wallet remote data here: the client takes the Eris off by itself, and with the wallet
+  // values on top it showed 50,000 less until the next login
   #[rustfmt::skip]
   let statement = transaction
     .prepare(/* language=postgresql */ r#"
