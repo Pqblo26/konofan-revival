@@ -102,6 +102,23 @@ impl Party {
     }
   }
 
+  /// Leaves a member only in its first slot. Old default teams had the same member in several
+  /// formations, and a battle with a repeated member stays on "Now Loading" forever.
+  pub fn drop_repeated_members(&mut self) {
+    let mut seen = Vec::new();
+    for form in self.party_forms.iter_mut() {
+      for slot in [&mut form.main, &mut form.sub1, &mut form.sub2] {
+        if *slot != 0 {
+          if seen.contains(slot) {
+            *slot = 0;
+          } else {
+            seen.push(*slot);
+          }
+        }
+      }
+    }
+  }
+
   /// Makes each formation's special skill one of its main member's. The team keeps the special
   /// skill of the slot when Suggest, Reset or a new account change the main member, and the game
   /// freezes when a character uses a special skill that is not theirs.

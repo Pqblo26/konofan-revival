@@ -90,6 +90,51 @@ pub fn stage_id_list(character_id: i64, released: &[i64]) -> Vec<i32> {
   list
 }
 
+/// Stat bonuses of each character of a user (character id -> [hp, attack, magicattack, defense,
+/// magicdefence, agility, dexterity, luck]): the affinity level's row of
+/// `character_intimacy_details` (not cumulative) plus every released trial stage. The game adds
+/// them on the character sheet only; in battle it uses the member stats as sent.
+pub async fn character_bonuses<'a>(
+  executor: impl Into<QueryExecutor<'a>>,
+  user_id: UserId,
+) -> anyhow::Result<HashMap<i64, [i32; 8]>> {
+  const KEYS: [&str; 8] = ["hp", "attack", "magicattack", "defense", "magicdefence", "agility", "dexterity", "luck"];
+  let executor = executor.into();
+  let client = executor.client();
+  let mut bonuses: HashMap<i64, [i32; 8]> = HashMap::new();
+
+  #[rustfmt::skip]
+  let characters = client.query(/* language=postgresql */ r#"
+    select character_id, intimacy from user_characters where user_id = $1
+  "#, &[&user_id]).await.context("failed to read characters")?;
+  let intimacy_details = get_master_manager().get_master("character_intimacy_details");
+  for row in &characters {
+    let (character_id, intimacy): (i64, i32) = (row.get(0), row.get(1));
+    let level = get_intimacy_level_calculator().get_level(intimacy) as i64;
+    if let Some(details) = intimacy_details
+      .iter()
+      .find(|details| int(details, "chara_id") == character_id && int(details, "character_level") == level)
+    {
+      let bonus = bonuses.entry(character_id).or_default();
+      for (index, key) in KEYS.iter().enumerate() {
+        // The master spells magic attack "magicattak"
+        let key = if *key == "magicattack" { "magicattak" } else { key };
+        bonus[index] += int(details, key) as i32;
+      }
+    }
+  }
+
+  for (character_id, stages) in released_stages(client, user_id).await? {
+    let bonus = bonuses.entry(character_id).or_default();
+    for row in stages_of(character_id).into_iter().filter(|row| stages.contains(&int(row, "stage_id"))) {
+      for (index, key) in KEYS.iter().enumerate() {
+        bonus[index] += int(row, key) as i32;
+      }
+    }
+  }
+  Ok(bonuses)
+}
+
 /// Everything the client keeps about one character, as sent at login.
 pub async fn character_parameter<'a>(
   executor: impl Into<QueryExecutor<'a>>,

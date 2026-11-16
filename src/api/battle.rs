@@ -189,9 +189,25 @@ pub async fn battle_party_members(
     .run(user_id, &mut members.iter_mut().collect::<Vec<_>>())
     .await?;
 
+  // Affinity and Trial of the Ancients bonuses: the game shows them on the character sheet but
+  // fights with the stats sent here
+  let bonuses = crate::api::character_enhance::character_bonuses(client, user_id).await?;
   let members = members
     .into_iter()
     .filter_map(|member| Some(member.to_battle_member(party.form_of(member.id)?)))
+    .map(|mut member| {
+      if let Some(bonus) = bonuses.get(&member.character_id) {
+        member.hp += bonus[0];
+        member.attack += bonus[1];
+        member.magicattack += bonus[2];
+        member.defense += bonus[3];
+        member.magicdefence += bonus[4];
+        member.agility += bonus[5];
+        member.dexterity += bonus[6];
+        member.luck += bonus[7];
+      }
+      member
+    })
     .collect();
   Ok((party.to_battle_party(), members))
 }
@@ -205,6 +221,7 @@ pub async fn fetch_battle_party(
   let mut party = FetchUserParty::new(client).await?.run(user_id, party_id).await?;
   let progress = crate::user::progress::PlayerProgress::load(client, user_id).await?;
   party.restrict_to_rank(progress.rank);
+  party.drop_repeated_members();
   party.fix_special_skills();
   Ok(party)
 }
