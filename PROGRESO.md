@@ -76,7 +76,7 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
   - **Causa real del cuelgue** (encontrada probando respuestas una a una, primero con Pablo y luego jugando en MuMu): en la primera fase de una zona, y sin partida, `dungeon_area_top` no puede llevar `unchoosed_benefit_id_list`. Su mera presencia, incluso con `[0,0,0]`, cuelga el juego o lo devuelve a la portada. Ahora ese campo solo va cuando hay bendiciones que elegir (tras superar una fase), y Back + volver lleva directo a la fase, como en el original.
   - Combates de mazmorra que se ganaban solos: en `dungeon_battle_start`, la vida de los enemigos va en `hp` (no `current_hp`); con otro nombre el juego leía 0. Además se manda el `chest` de la oleada.
   - Rasgo del equipo en mazmorras (`dungeon_stage_party_passive_skill_change`, tabla `user_dungeon_traits`). El diálogo se queda abierto tras cambiarlo (pasa de «Change» a «Remove»); se cierra con Close.
-  - Suggest todavía no pone armas, joyas, ayudante ni rasgo de fama: el servidor aún no maneja el equipo de los personajes en los equipos.
+  - Suggest todavía no pone el rasgo de fama (las armas, joyas y ayudante, desde #55).
 - **Décima tanda: probando solo en MuMu** (2026-11-13 y 14, Claude juega por adb):
   - Tras un combate salía «Player Rank 1» y se repetían los tutoriales: el resultado borraba y volvía a sumar rango y experiencia. Ahora solo se suma lo ganado.
   - El lanzador quita la barra final de la URL (`…/static`) y daba 404: nginx la acepta con y sin barra.
@@ -98,6 +98,11 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
   - Evento 24011: las fases usan el progreso real y salen bloqueadas hasta superar la anterior; las misiones son las del evento y se pueden recoger; el canje tiene fechas actuales (#42, #43). Las de «superar todas» solo cuentan con todas superadas (#46).
   - Jefe del evento: las victorias cuentan para su lista y sus misiones (#47), y la información del evento da las derrotas reales (#49). El login ya no regala 600 tickets de jefe falsos: se ven los de la base de datos (#48).
   - El cartel de misión recomendada del evento («Defeat the boss 100 times!») sale con el sello Done sin ninguna derrota. El cliente lo calcula solo con el maestro `event_mission_recommend` y sus datos de misiones (ninguna respuesta lleva ese estado); la misión 52401145 sí llega en `mission`, pero en cadena (`enabled_id`). Sin resolver; es solo visual.
+- **Decimotercera tanda: Branch, gacha, combate y Suggest** (2026-11-15 a 21):
+  - Branch real (`surprise.rs`, tabla `user_surprise_events`, migración `20261115000003`): una jugada al día por evento, combate con tu equipo y premios de verdad en los tres tipos (combate, corto e historia) (#51). Las tarjetas muestran «Occurrences 12/15» y «Next 0m» (parche del maestro `surprise_event_stock_limit`, #52).
+  - El gacha cobra: cuarzos gratis primero y luego de pago, la diaria solo de pago y el botón de ticket gasta un ticket (`gachaticket`). Si no llega, responde -110 (#53).
+  - Combate: la afinidad y el Trial of the Ancients ya suman en las estadísticas que se mandan al empezar (el juego solo los suma en la ficha). Un equipo con la misma carta en dos huecos ya no cuelga el combate (`Party::drop_repeated_members`) (#54).
+  - Suggest con «Equipment» y «Assist»: pone a cada titular la mejor arma de su tipo (o su arma única) según la estadística elegida, la mejor joya (primero las que resisten los elementos elegidos; el orden de los dígitos de resistencia es una suposición) sin repetir ninguna en el equipo, y el ayudante con más estadísticas. El login ya no se rompe si hay un equipo sin datos en el maestro y manda las joyas como joyas (#55).
 - **Instalación local en Windows** (rama `instalacion-windows-mumu`): `scripts/konofan/setup-wsl.sh`, `scripts/konofan/mirror-assets.sh` y la guía [docs/konofan/INSTALAR-WINDOWS-MUMU.md](docs/konofan/INSTALAR-WINDOWS-MUMU.md). Probado de punta a punta en Ubuntu 24.04 (PostgreSQL 16, nginx, TLS), sin el juego.
 
 ## Qué falta
@@ -108,7 +113,6 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
 - Fame Potions: se pueden comprar, pero `use_supplement_num` al empezar una Fame Quest todavía no las gasta.
 - Boss de evento: falta dar medallas (los maestros no dicen cuántas) e intentos limitados por día (`limit`, Challenges).
 - Battle Arena EX: sin implementar («Not available»). Los retos de mazmorra (`DungeonChallenge`) se compran pero aún no se gastan.
-- El gacha no cobra gemas/tickets (`money_type` se ignora).
 - Los banners están escritos a mano en `gacha_info()` (`src/api/gacha.rs`); hay que pasarlos a la base de datos para poder editarlos.
 - Endpoints todavía en stub (~100 avisos `encountered stub` en el código): sorteo de eventos, compras que fallan por el cliente, vincular cuenta, etc.
 - Eventos sorpresa de ramas (branch): en stub, con equipo equivocado y la puntuación dada como gemas.
@@ -147,5 +151,5 @@ Otros stubs vistos en el registro: misiones (`mission_home`; `mission_list` ya e
 
 1. Pablo: seguir la guía de instalación y llegar al menú principal en MuMu.
 2. Probar una tirada en un banner con probabilidades importadas y revisar el log `gacha draw`.
-3. Pasar los banners de `gacha_info()` a la base de datos y cobrar la moneda del gacha.
+3. Pasar los banners de `gacha_info()` a la base de datos.
 4. Editor de banners y probabilidades.

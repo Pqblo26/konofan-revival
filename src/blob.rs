@@ -233,18 +233,21 @@ pub async fn get_login_remote_data(state: &AppState, session: &Session) -> Vec<R
   };
 
   let weapons = {
-    let weapon_details = masters.get_master("equip_weapon_details");
-
-    // (item_id, level) -> item_id_details
-    let item_to_item_details: HashMap<(i64, i32), i64> = weapon_details
-      .iter()
-      .map(|data| {
+    // (item_id, level) -> (kind, item_id_details); weapons and accessories have different item ids
+    let item_to_item_details: HashMap<(i64, i32), (RemoteDataItemType, i64)> = [
+      (RemoteDataItemType::Weapon, "equip_weapon_details"),
+      (RemoteDataItemType::Accessory, "equip_accessory_details"),
+    ]
+    .into_iter()
+    .flat_map(|(kind, master)| {
+      masters.get_master(master).iter().map(move |data| {
         let item_id: i64 = data["item_id"].as_str().unwrap().parse::<i64>().unwrap();
         let level: i32 = data["lv"].as_str().unwrap().parse::<i32>().unwrap();
         let item_id_details: i64 = data["item_id_details"].as_str().unwrap().parse::<i64>().unwrap();
-        ((item_id, level), item_id_details)
+        ((item_id, level), (kind, item_id_details))
       })
-      .collect::<HashMap<_, _>>();
+    })
+    .collect::<HashMap<_, _>>();
 
     #[rustfmt::skip]
     let statement = client
@@ -268,23 +271,18 @@ pub async fn get_login_remote_data(state: &AppState, session: &Session) -> Vec<R
 
     rows
       .iter()
-      .map(|row| {
+      .filter_map(|row| {
         let id: i64 = row.get(0);
-        let item_type: i64 = row.get(1);
         let item_id: i64 = row.get(2);
         let level: i32 = row.get(3);
         let is_locked: bool = row.get(4);
-        let item_id_details = *item_to_item_details
-          .get(&(item_id, level))
-          .expect(&format!("missing item details for item_id={} level={}", item_id, level));
+        // An unknown row must not break the login: it is skipped
+        let Some(&(kind, item_id_details)) = item_to_item_details.get(&(item_id, level)) else {
+          tracing::warn!(id, item_id, level, "equipment without master details, not sent");
+          return None;
+        };
 
-        AddEquipment::new(
-          RemoteDataItemType::from(item_type as i32),
-          item_id_details,
-          id as i32,
-          is_locked,
-        )
-        .into_remote_data()
+        Some(AddEquipment::new(kind, item_id_details, id as i32, is_locked).into_remote_data())
       })
       .flatten()
       .collect::<Vec<_>>()
