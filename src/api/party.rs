@@ -524,8 +524,7 @@ fn master_int(row: &serde_json::Value, key: &str) -> i64 {
 fn equipment_stat(row: &serde_json::Value, stat: &str) -> i64 {
   let key = match stat {
     "hp" => "hp",
-    // Suggest's "Stats" sends "attack": magic weapons only have magic attack, so both count
-    "attack" => return master_int(row, "attack") + master_int(row, "magicattack"),
+    "attack" => "attack",
     "magicattack" => "magicattack",
     "defense" | "defence" => "defense",
     "magicdefense" | "magicdefence" => "magicdefence",
@@ -593,6 +592,13 @@ pub(crate) fn suggest_equipment(
       .find(|row| master_int(row, "id") == character_id)
       .and_then(|row| row["weapon_type"].as_str())
       .unwrap_or("");
+    // Suggest's "Stats" sends "attack": a magic character wants magic attack instead
+    let level = member.level();
+    let stat = if weapon_stat == "attack" && member.stats.attack_magic.interpolate(level) > member.stats.attack.interpolate(level) {
+      "magicattack"
+    } else {
+      weapon_stat
+    };
 
     let weapon = equipment
       .iter()
@@ -604,7 +610,7 @@ pub(crate) fn suggest_equipment(
           return None;
         }
         let details = details_of(weapon_details, item)?;
-        Some((equipment_stat(details, weapon_stat), master_int(weapon, "rare"), item.level, item.unique_id))
+        Some((equipment_stat(details, stat), master_int(weapon, "rare"), item.level, item.unique_id))
       })
       .max();
     if let Some((_, _, _, unique_id)) = weapon {
