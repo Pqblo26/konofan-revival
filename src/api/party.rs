@@ -301,7 +301,8 @@ pub async fn update_party_form(
 /// "Suggest party" button
 /// "Tool" -> "Suggest": builds the strongest team from the user's members. The five strongest
 /// members (one per character) go in front, and the next strongest fill the sub slots, without
-/// repeating a character in the team. Weapons and accessories are kept.
+/// repeating a character in the team. With "Equipment" and "Assist" ticked it also picks
+/// weapons, accessories and the assist.
 /// Elements of a member: the attributes of its skills ("fire", "water", "thunder", "earth", "wind",
 /// "light", "cursed"), as the game's Suggest filter names them.
 pub(crate) fn member_elements(member: &crate::member::Member) -> Vec<String> {
@@ -416,12 +417,32 @@ pub async fn party_offer(state: Arc<AppState>, request: ApiRequest, session: Arc
 
   party.fix_special_skills();
 
+  // "Equipment": the best weapon and accessory for each main member, without repeating one in the team
+  if flag("equip") {
+    let weapon_stat = body.get("weapon_priority_status").cloned().unwrap_or_else(|| "attack".to_owned());
+    let resistances: Vec<String> = body
+      .get("accessory_priority_resistances")
+      .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok())
+      .unwrap_or_default()
+      .into_iter()
+      .filter(|resistance| resistance != "none" && !resistance.is_empty())
+      .collect();
+    let equipment = load_equipment(&client, session.user_id).await?;
+    suggest_equipment(&mut party, &members, &equipment, &weapon_stat, &resistances);
+  }
+  // "Assist": the strongest assist the player has
+  if flag("assist") {
+    if let Some(assist) = best_assist() {
+      party.assist = assist;
+    }
+  }
+
   let transaction = client.transaction().await.context("failed to start transaction")?;
   for form in &party.party_forms {
     #[rustfmt::skip]
     transaction.execute(/* language=postgresql */ r#"
       update user_party_forms
-      set main_member_id = $4, sub1_member_id = $5, sub2_member_id = $6, special_skill_id = $7
+      set main_member_id = $4, sub1_member_id = $5, sub2_member_id = $6, special_skill_id = $7, weapon_id = $8, accessory_id = $9
       where user_id = $1 and party_id = $2 and form_id = $3
     "#, &[
       &session.user_id,
@@ -431,13 +452,168 @@ pub async fn party_offer(state: Arc<AppState>, request: ApiRequest, session: Arc
       &(form.sub1 as i64),
       &(form.sub2 as i64),
       &(form.specialskill.special_skill_id as i64),
+      &form.weapon,
+      &form.acc,
     ]).await.context("failed to update party form")?;
   }
+  #[rustfmt::skip]
+  transaction.execute(/* language=postgresql */ r#"
+    update user_parties set assist_id = $3 where user_id = $1 and party_id = $2
+  "#, &[&session.user_id, &party_no, &party.assist]).await.context("failed to update party assist")?;
   transaction.commit().await.context("failed to commit transaction")?;
-  info!(?party_no, ?elements, ?stat, rank = progress.rank, forms = ?party.party_forms.iter().map(|form| (form.main, form.sub1, form.sub2)).collect::<Vec<_>>(), "party suggested");
+  info!(?party_no, ?elements, ?stat, rank = progress.rank, assist = party.assist, forms = ?party.party_forms.iter().map(|form| (form.main, form.sub1, form.sub2, form.weapon, form.acc)).collect::<Vec<_>>(), "party suggested");
 
   // Response is identical to party_info
   Ok(party_info(state, session).await)
+}
+
+/// An equipment item the player owns: its unique id, master item id and level.
+pub(crate) struct OwnedEquipment {
+  pub unique_id: i64,
+  pub item_id: i64,
+  pub level: i64,
+}
+
+pub(crate) async fn load_equipment(client: &deadpool_postgres::Client, user_id: crate::user::id::UserId) -> anyhow::Result<Vec<OwnedEquipment>> {
+  #[rustfmt::skip]
+  let rows = client.query(/* language=postgresql */ r#"
+    select id, item_id, level from user_items_equipment where user_id = $1
+  "#, &[&user_id]).await.context("failed to load equipment")?;
+  Ok(
+    rows
+      .iter()
+      .map(|row| OwnedEquipment {
+        unique_id: row.get(0),
+        item_id: row.get(1),
+        level: row.get::<_, i32>(2) as i64,
+      })
+      .collect(),
+  )
+}
+
+fn master_int(row: &serde_json::Value, key: &str) -> i64 {
+  row[key].as_str().and_then(|value| value.parse().ok()).unwrap_or(0)
+}
+
+/// Stat of an equipment or assist level row; "strength" or unknown = all stats added.
+fn equipment_stat(row: &serde_json::Value, stat: &str) -> i64 {
+  let key = match stat {
+    "hp" => "hp",
+    "attack" => "attack",
+    "magicattack" => "magicattack",
+    "defense" | "defence" => "defense",
+    "magicdefense" | "magicdefence" => "magicdefence",
+    "agility" => "agility",
+    "dexterity" => "dexterity",
+    "luck" => "luck",
+    _ => {
+      return ["hp", "attack", "magicattack", "defense", "magicdefence", "agility", "dexterity", "luck"]
+        .iter()
+        .map(|key| master_int(row, key))
+        .sum()
+    }
+  };
+  master_int(row, key)
+}
+
+/// Elements an accessory resists. Its `skill` is "1" followed by one digit per element, assumed
+/// to be in the order of Suggest's element filter (the client is not decompiled).
+fn accessory_resistances(row: &serde_json::Value) -> Vec<&'static str> {
+  const ELEMENTS: [&str; 7] = ["fire", "water", "thunder", "earth", "wind", "light", "cursed"];
+  let skill = row["skill"].as_str().unwrap_or("0");
+  if skill.len() != 9 || !skill.starts_with('1') {
+    return vec![];
+  }
+  skill[1..8]
+    .chars()
+    .zip(ELEMENTS)
+    .filter(|(digit, _)| *digit != '0')
+    .map(|(_, element)| element)
+    .collect()
+}
+
+/// Puts the best owned weapon and accessory on every main member: weapons of the character's
+/// weapon type (or its own unique weapon) by [weapon_stat]; accessories resisting the most of
+/// [resistances], then by total stats. Forms without a main member get nothing.
+pub(crate) fn suggest_equipment(
+  party: &mut Party,
+  members: &[crate::member::Member],
+  equipment: &[OwnedEquipment],
+  weapon_stat: &str,
+  resistances: &[String],
+) {
+  let masters = get_master_manager();
+  let weapons = masters.get_master("equip_weapon");
+  let weapon_details = masters.get_master("equip_weapon_details");
+  let accessories = masters.get_master("equip_accessory");
+  let accessory_details = masters.get_master("equip_accessory_details");
+  let characters = masters.get_master("character");
+  let details_of = |details: &'static Vec<serde_json::Value>, item: &OwnedEquipment| {
+    details
+      .iter()
+      .find(|row| master_int(row, "item_id") == item.item_id && master_int(row, "lv") == item.level)
+  };
+
+  let mut used = std::collections::HashSet::new();
+  for form in party.party_forms.iter_mut() {
+    form.weapon = 0;
+    form.acc = 0;
+    let Some(member) = members.iter().find(|member| member.id == form.main) else {
+      continue;
+    };
+    let character_id = member.prototype.character_id as i64;
+    let weapon_type = characters
+      .iter()
+      .find(|row| master_int(row, "id") == character_id)
+      .and_then(|row| row["weapon_type"].as_str())
+      .unwrap_or("");
+
+    let weapon = equipment
+      .iter()
+      .filter(|item| !used.contains(&item.unique_id))
+      .filter_map(|item| {
+        let weapon = weapons.iter().find(|row| master_int(row, "item_id") == item.item_id)?;
+        let owner = master_int(weapon, "chara_id");
+        if weapon["weapon_type"].as_str() != Some(weapon_type) || (owner != 0 && owner != character_id) {
+          return None;
+        }
+        let details = details_of(weapon_details, item)?;
+        Some((equipment_stat(details, weapon_stat), master_int(weapon, "rare"), item.level, item.unique_id))
+      })
+      .max();
+    if let Some((_, _, _, unique_id)) = weapon {
+      form.weapon = unique_id;
+      used.insert(unique_id);
+    }
+
+    let accessory = equipment
+      .iter()
+      .filter(|item| !used.contains(&item.unique_id))
+      .filter_map(|item| {
+        accessories.iter().find(|row| master_int(row, "item_id") == item.item_id)?;
+        let details = details_of(accessory_details, item)?;
+        let matched = accessory_resistances(details)
+          .iter()
+          .filter(|element| resistances.iter().any(|wanted| wanted == *element))
+          .count();
+        Some((matched, equipment_stat(details, "strength"), item.level, item.unique_id))
+      })
+      .max();
+    if let Some((_, _, _, unique_id)) = accessory {
+      form.acc = unique_id;
+      used.insert(unique_id);
+    }
+  }
+}
+
+/// The assist with the highest total stats (the player has every assist at every level, see
+/// `assist_make_notice`); its `assist_details` id is what a party stores.
+pub(crate) fn best_assist() -> Option<i64> {
+  get_master_manager()
+    .get_master("assist_details")
+    .iter()
+    .max_by_key(|row| (equipment_stat(row, "strength"), master_int(row, "lv")))
+    .map(|row| master_int(row, "id"))
 }
 
 // party_no=1
