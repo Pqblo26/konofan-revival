@@ -301,12 +301,25 @@ pub async fn party_info(state: Arc<AppState>, session: Arc<Session>) -> impl Int
     }
   }
 
+  // Weapons and accessories equipped in any team, so the team screen can show them
+  let equipped = parties
+    .iter()
+    .flat_map(|party| party.party_forms.iter().flat_map(|form| [form.weapon, form.acc]))
+    .filter(|id| *id != 0)
+    .collect::<std::collections::HashSet<_>>();
+  let equipment = crate::api::party::load_equipment(&client, session.user_id)
+    .await?
+    .into_iter()
+    .filter(|item| equipped.contains(&item.unique_id))
+    .collect::<Vec<_>>();
+  let (weapons, accessories) = crate::api::party::equipment_wire(&equipment);
+
   Ok(Signed(
     PartyWire {
       party: parties,
       members: members.iter().map(|member| member.to_party_member()).collect(),
-      weapons: vec![],
-      accessories: vec![],
+      weapons,
+      accessories,
     },
     session,
   ))

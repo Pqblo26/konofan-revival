@@ -491,6 +491,29 @@ pub(crate) async fn load_equipment(client: &deadpool_postgres::Client, user_id: 
   )
 }
 
+/// Weapons and accessories as the team screens list them: unique id and `item_id_details` (the
+/// item at its level). Only the [equipment] that has master data.
+pub(crate) fn equipment_wire(equipment: &[OwnedEquipment]) -> (Vec<PartyWeapon>, Vec<PartyAccessory>) {
+  let masters = get_master_manager();
+  let details = |master: &str, item: &OwnedEquipment| {
+    masters
+      .get_master(master)
+      .iter()
+      .find(|row| master_int(row, "item_id") == item.item_id && master_int(row, "lv") == item.level)
+      .map(|row| master_int(row, "item_id_details"))
+  };
+  let mut weapons = Vec::new();
+  let mut accessories = Vec::new();
+  for item in equipment {
+    if let Some(weapon_id) = details("equip_weapon_details", item) {
+      weapons.push(PartyWeapon { id: item.unique_id, weapon_id, trial: false });
+    } else if let Some(accessory_id) = details("equip_accessory_details", item) {
+      accessories.push(PartyAccessory { id: item.unique_id, accessory_id });
+    }
+  }
+  (weapons, accessories)
+}
+
 fn master_int(row: &serde_json::Value, key: &str) -> i64 {
   row[key].as_str().and_then(|value| value.parse().ok()).unwrap_or(0)
 }
@@ -676,17 +699,24 @@ pub struct PartyChangeListRequest {
 }
 
 pub async fn party_change_list(
+  state: Arc<AppState>,
   session: Arc<Session>,
   Params(params): Params<PartyChangeListRequest>,
 ) -> impl IntoHandlerResponse {
   warn!(?params, "encountered stub: party_change_list");
 
   let assists = get_master_manager().get_master("assist_details");
+  // Every weapon and accessory the player owns, to choose from
+  let client = state.get_database_client().await?;
+  let (weapons, accessories) = equipment_wire(&load_equipment(&client, session.user_id).await?);
 
   Ok(Unsigned(PartychangelistResponseDto {
     members: vec![],
-    weapons: vec![],
-    accessories: vec![],
+    weapons: weapons
+      .into_iter()
+      .map(|weapon| ChangeListPartyWeapon { id: weapon.id, weapon_id: weapon.weapon_id })
+      .collect(),
+    accessories,
     assists: assists
       .iter()
       .map(|assist| ChangeListPartyAssist {
