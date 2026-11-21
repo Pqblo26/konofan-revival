@@ -573,27 +573,19 @@ pub async fn marathon_single_start(
   let mut client = state.pool.get().await.context("failed to get database connection")?;
   let ticket_remote = pay_boss_tickets(&mut client, &session, &params).await?;
 
-  let party = crate::api::battle::fetch_battle_party(&client, session.user_id, params.party_id as i64).await?;
+  // The result does not repeat the multiplier: remembered for its drops
+  BOSS_TICKET_RATIO
+    .lock()
+    .unwrap()
+    .insert(session.user_id, params.ticket_ratio.max(1));
 
-  let fetch_members = FetchUserMembersIn::new(&client).await.unwrap();
-  #[rustfmt::skip]
-  let mut members = fetch_members.run(
-    session.user_id,
-    &party.member_ids(),
-  ).await.unwrap();
-  FetchUserMemberSkillsIn::new(&client)
-    .await?
-    .run(session.user_id, &mut members.iter_mut().collect::<Vec<_>>())
-    .await?;
+  // Same members and stats (affinity, Trial) as the other battles
+  let (party, members) = battle_party_members(&client, session.user_id, params.party_id as i64).await?;
 
   let mut response = CallResponse::new_success(Box::new(MarathonSingleStartResponse {
     chest: "10101111,10101120,10101131".to_string(),
-    party: party.to_battle_party(),
-    // We must send only members that are used in the party, otherwise hardlock occurs?
-    members: members
-      .into_iter()
-      .filter_map(|member| Some(member.to_battle_member(party.form_of(member.id)?)))
-      .collect(),
+    party,
+    members,
     get_log: true,
   }));
   response.remote.extend(ticket_remote);
@@ -696,17 +688,31 @@ pub async fn marathon_single_result(
   session: Arc<Session>,
   Params(params): Params<MarathonSingleResultRequest>,
 ) -> impl IntoHandlerResponse {
-  let client = state.pool.get().await.context("failed to get database connection")?;
-  // Defeats count for the event's boss missions and the boss list
+  let mut client = state.pool.get().await.context("failed to get database connection")?;
+  let ratio = BOSS_TICKET_RATIO.lock().unwrap().remove(&session.user_id).unwrap_or(1);
+  // Defeats count for the event's boss missions and the boss list, and give the boss's drops
+  let mut reward = Vec::new();
+  let mut remote = Vec::new();
   if params.win != 0 {
-    crate::api::quest::progress::record_quest(&client, session.user_id, params.quest_id, 1, [false; 3]).await?;
-    info!(quest_id = params.quest_id, event_id = params.event_id, "event boss defeated");
+    let transaction = client.transaction().await.context("failed to start transaction")?;
+    crate::api::quest::progress::record_quest(&transaction, session.user_id, params.quest_id, 1, [false; 3]).await?;
+    let (is_rare, items) = boss_drop(params.quest_id, ratio);
+    let mut wallet = Wallet::load(&transaction, session.user_id).await?;
+    remote.extend(crate::user::grant::grant_items(&transaction, session.user_id, &mut wallet, &items).await?);
+    wallet.save(&transaction, session.user_id).await?;
+    remote.extend(wallet.to_remote_data());
+    transaction.commit().await.context("failed to commit transaction")?;
+    reward = items
+      .iter()
+      .map(|&(itemtype, itemid, itemnum)| BattleReward { itemtype, itemid, itemnum, is_rare })
+      .collect();
+    info!(quest_id = params.quest_id, event_id = params.event_id, ratio, ?items, "event boss defeated");
   }
   let party = crate::api::battle::fetch_battle_party(&client, session.user_id, params.party_id as i64).await?;
 
   // Boss stages have no affinity reward in the masters
   let (member_exp, love) = make_battle_member_exp_and_character_love(&party, &client, &session, 0).await?;
-  Ok(Unsigned(BattleResultResponse {
+  let mut response = CallResponse::new_success(Box::new(BattleResultResponse {
     limit: 0,
     exp: 5,
     lvup: 0,
@@ -716,7 +722,7 @@ pub async fn marathon_single_result(
     love,
     member_exp,
     mission: params.clearquestmission,
-    reward: vec![],
+    reward,
     clearreward: vec![],
     auto_progression_result: AutoProgressionResultResponse {
       auto_count: 0,
@@ -727,5 +733,52 @@ pub async fn marathon_single_result(
       clearreward_all: vec![],
     },
     firstclear: true,
-  }))
+  }));
+  response.remote.extend(remote);
+  Ok(Unsigned(response))
+}
+
+/// Ticket multiplier each player chose at the last event boss start.
+static BOSS_TICKET_RATIO: std::sync::LazyLock<std::sync::Mutex<HashMap<crate::user::id::UserId, i32>>> =
+  std::sync::LazyLock::new(Default::default);
+
+/// Drops of an event boss win. Its wave (`battle_wave`) chooses normal or rare by weight; the
+/// packs of that wave are `wave_id * 100 + n`, normal below 50 and rare from 50, one at random.
+/// The multiplier of tickets spent multiplies the amounts.
+fn boss_drop(quest_id: i32, ratio: i32) -> (bool, Vec<(i32, i64, i32)>) {
+  use rand::Rng;
+  let masters = get_master_manager();
+  let int = |row: &serde_json::Value, key: &str| row[key].as_str().and_then(|value| value.parse::<i64>().ok()).unwrap_or(0);
+  let Some(wave_id) = masters
+    .get_master("event_marathon_quest_stage_boss_single")
+    .iter()
+    .find(|row| int(row, "id") == quest_id as i64)
+    .map(|row| int(row, "wave_id1"))
+  else {
+    return (false, vec![]);
+  };
+  let Some(wave) = masters.get_master("battle_wave").iter().find(|row| int(row, "wave_id") == wave_id) else {
+    return (false, vec![]);
+  };
+  let (normal, rare) = (int(wave, "weight_normal").max(0), int(wave, "weight_rare").max(0));
+  let mut rng = rand::rng();
+  let is_rare = normal + rare > 0 && rng.random_range(0..normal + rare) >= normal;
+  let suffixes = if is_rare { 50..100 } else { 0..50 };
+  let packs = suffixes
+    .map(|n| wave_id * 100 + n)
+    .filter(|id| crate::api::exchange::get_pack(&id.to_string()).is_some())
+    .collect::<Vec<_>>();
+  if packs.is_empty() {
+    return (is_rare, vec![]);
+  }
+  let pack = packs[rng.random_range(0..packs.len())];
+  // The same item can be the main item and a bonus: shown once, added up
+  let mut items: Vec<(i32, i64, i32)> = Vec::new();
+  for (item_type, item_id, num) in crate::api::quest::finish::pack_items(pack) {
+    match items.iter_mut().find(|item| item.0 == item_type && item.1 == item_id) {
+      Some(item) => item.2 += num * ratio,
+      None => items.push((item_type, item_id, num * ratio)),
+    }
+  }
+  (is_rare, items)
 }
