@@ -472,12 +472,13 @@ pub(crate) struct OwnedEquipment {
   pub unique_id: i64,
   pub item_id: i64,
   pub level: i64,
+  pub is_locked: bool,
 }
 
 pub(crate) async fn load_equipment(client: &deadpool_postgres::Client, user_id: crate::user::id::UserId) -> anyhow::Result<Vec<OwnedEquipment>> {
   #[rustfmt::skip]
   let rows = client.query(/* language=postgresql */ r#"
-    select id, item_id, level from user_items_equipment where user_id = $1
+    select id, item_id, level, is_locked from user_items_equipment where user_id = $1 order by id
   "#, &[&user_id]).await.context("failed to load equipment")?;
   Ok(
     rows
@@ -486,6 +487,7 @@ pub(crate) async fn load_equipment(client: &deadpool_postgres::Client, user_id: 
         unique_id: row.get(0),
         item_id: row.get(1),
         level: row.get::<_, i32>(2) as i64,
+        is_locked: row.get(3),
       })
       .collect(),
   )
@@ -522,7 +524,8 @@ fn master_int(row: &serde_json::Value, key: &str) -> i64 {
 fn equipment_stat(row: &serde_json::Value, stat: &str) -> i64 {
   let key = match stat {
     "hp" => "hp",
-    "attack" => "attack",
+    // Suggest's "Stats" sends "attack": magic weapons only have magic attack, so both count
+    "attack" => return master_int(row, "attack") + master_int(row, "magicattack"),
     "magicattack" => "magicattack",
     "defense" | "defence" => "defense",
     "magicdefense" | "magicdefence" => "magicdefence",

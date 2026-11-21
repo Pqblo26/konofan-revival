@@ -1,9 +1,12 @@
 use serde::Serialize;
 
-use crate::api::master_all::get_master_manager;
-use crate::api::ApiRequest;
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use crate::call::CallCustom;
 use crate::handler::{IntoHandlerResponse, Unsigned};
+use crate::user::session::Session;
+use crate::AppState;
 
 // See [Wonder_Api_WeaponlistResponseDto_Fields]
 #[derive(Debug, Serialize)]
@@ -25,16 +28,23 @@ pub struct WeaponListItem {
   pub trial: bool,
 }
 
-pub async fn weapon_list(_request: ApiRequest) -> impl IntoHandlerResponse {
-  let equip_weapons = get_master_manager().get_master("equip_weapon_details");
+/// Weapons the player owns: `id` is the unique id a team stores, `weapon_id` the item at its level.
+pub async fn weapon_list(state: Arc<AppState>, session: Arc<Session>) -> impl IntoHandlerResponse {
+  let client = state.get_database_client().await?;
+  let equipment = crate::api::party::load_equipment(&client, session.user_id).await?;
+  let locked = equipment.iter().map(|item| (item.unique_id, item.is_locked)).collect::<HashMap<_, _>>();
+  let (weapons, _) = crate::api::party::equipment_wire(&equipment);
 
   Ok(Unsigned(WeaponList {
-    items: equip_weapons.iter().map(|item| WeaponListItem {
-      id: item["item_id_details"].as_str().unwrap().parse().unwrap(),
-      weapon_id: item["item_id_details"].as_str().unwrap().parse().unwrap(),
-      islock: false,
-      trial: false,
-    }).collect(),
+    items: weapons
+      .into_iter()
+      .map(|weapon| WeaponListItem {
+        id: weapon.id,
+        weapon_id: weapon.weapon_id,
+        islock: locked.get(&weapon.id).copied().unwrap_or(false),
+        trial: false,
+      })
+      .collect(),
   }))
 }
 
@@ -57,14 +67,21 @@ pub struct AccessoryListItem {
   pub islock: bool,
 }
 
-pub async fn accessory_list(_request: ApiRequest) -> impl IntoHandlerResponse {
-  let equip_accessories = get_master_manager().get_master("equip_accessory_details");
+/// Accessories the player owns, like [weapon_list].
+pub async fn accessory_list(state: Arc<AppState>, session: Arc<Session>) -> impl IntoHandlerResponse {
+  let client = state.get_database_client().await?;
+  let equipment = crate::api::party::load_equipment(&client, session.user_id).await?;
+  let locked = equipment.iter().map(|item| (item.unique_id, item.is_locked)).collect::<HashMap<_, _>>();
+  let (_, accessories) = crate::api::party::equipment_wire(&equipment);
 
   Ok(Unsigned(AccessoryList {
-    items: equip_accessories.iter().map(|item| AccessoryListItem {
-      id: item["item_id_details"].as_str().unwrap().parse().unwrap(),
-      accessory_id: item["item_id_details"].as_str().unwrap().parse().unwrap(),
-      islock: false,
-    }).collect(),
+    items: accessories
+      .into_iter()
+      .map(|accessory| AccessoryListItem {
+        id: accessory.id,
+        accessory_id: accessory.accessory_id,
+        islock: locked.get(&accessory.id).copied().unwrap_or(false),
+      })
+      .collect(),
   }))
 }
