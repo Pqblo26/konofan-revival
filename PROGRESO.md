@@ -103,6 +103,7 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
   - El gacha cobra: cuarzos gratis primero y luego de pago, la diaria solo de pago y el botón de ticket gasta un ticket (`gachaticket`). Si no llega, responde -110 (#53).
   - Combate: la afinidad y el Trial of the Ancients ya suman en las estadísticas que se mandan al empezar (el juego solo los suma en la ficha). Un equipo con la misma carta en dos huecos ya no cuelga el combate (`Party::drop_repeated_members`) (#54).
   - Suggest con «Equipment» y «Assist»: pone a cada titular la mejor arma de su tipo (o su arma única) según la estadística elegida, la mejor joya (primero las que resisten los elementos elegidos; el orden de los dígitos de resistencia es una suposición) sin repetir ninguna en el equipo, y el ayudante con más estadísticas. El login ya no se rompe si hay un equipo sin datos en el maestro y manda las joyas como joyas (#55).
+  - Jefe del evento: cada victoria da su botín real (medallas de canje 240111/240112, materiales y Eris): la oleada (`battle_wave`) elige normal o raro por peso y se da uno de sus lotes (`wave_id * 100 + n`, raros desde 50), multiplicado por los tickets usados (x1, x2…). Su combate lleva ya la afinidad y el Trial. No hay límite diario: lo limita el gasto de tickets, como en el juego (#56).
 - **Instalación local en Windows** (rama `instalacion-windows-mumu`): `scripts/konofan/setup-wsl.sh`, `scripts/konofan/mirror-assets.sh` y la guía [docs/konofan/INSTALAR-WINDOWS-MUMU.md](docs/konofan/INSTALAR-WINDOWS-MUMU.md). Probado de punta a punta en Ubuntu 24.04 (PostgreSQL 16, nginx, TLS), sin el juego.
 
 ## Qué falta
@@ -111,7 +112,7 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
 - Armas y accesorios no se pueden dar desde regalos ni canjes todavía.
 - Sin comprobar en el juego: que el cliente acepte rango y experiencia absolutos tras el combate (se mandan como las monedas) y que las fases bloqueadas se oculten bien.
 - Fame Potions: se pueden comprar, pero `use_supplement_num` al empezar una Fame Quest todavía no las gasta.
-- Boss de evento: falta dar medallas (los maestros no dicen cuántas) e intentos limitados por día (`limit`, Challenges).
+- Jefe del evento multijugador: sin botín todavía (solo el individual, #56).
 - Battle Arena EX: sin implementar («Not available»). Los retos de mazmorra (`DungeonChallenge`) se compran pero aún no se gastan.
 - Los banners están escritos a mano en `gacha_info()` (`src/api/gacha.rs`); hay que pasarlos a la base de datos para poder editarlos.
 - Endpoints todavía en stub (~100 avisos `encountered stub` en el código): sorteo de eventos, compras que fallan por el cliente, vincular cuenta, etc.
