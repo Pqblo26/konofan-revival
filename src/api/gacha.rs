@@ -240,7 +240,12 @@ async fn listed_banners(client: &tokio_postgres::Client) -> anyhow::Result<Vec<G
     from gacha.banners
     where (start_at is null or start_at <= now()) and (end_at is null or end_at > now())
     order by sort_order, gacha_id
-  "#, &[]).await.context("failed to load gacha banners")?;
+  "#, &[]).await;
+  // Without the table (migration not applied yet) Recruit still lists every banner
+  let rows = rows.unwrap_or_else(|error| {
+    warn!(?error, "failed to load gacha.banners, listing every banner");
+    Vec::new()
+  });
   let rows = rows
     .iter()
     .map(|row| BannerRow {

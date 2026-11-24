@@ -7,7 +7,8 @@ use crate::api::dungeon::{DungeonStagePartyForm, DungeonTeamSet};
 use crate::api::home::{MultiBattleInvitation, MultiBattleRoom};
 use crate::api::party_info::{Party, PartyForm, SpecialSkillInfo};
 use crate::api::{MemberFameStats, RemoteDataItemType};
-use crate::call::CallCustom;
+use crate::call::{CallCustom, CallResponse};
+use crate::user::wallet::Wallet;
 use crate::extractor::Params;
 use crate::handler::{IntoHandlerResponse, Unsigned};
 use crate::member::{
@@ -20,7 +21,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::warn;
+use tracing::{info, warn};
 
 // See [Wonder_Api_MultiBattleInvitationListResponseDto_Fields]
 #[derive(Debug, Serialize)]
@@ -293,14 +294,32 @@ pub async fn marathon_multi_start(
   session: Arc<Session>,
   Params(params): Params<MarathonMultiStartRequest>,
 ) -> impl IntoHandlerResponse {
-  warn!(?params, "encountered stub: marathon_multi_start");
-
-  let client = state.pool.get().await.context("failed to get database connection")?;
+  // The other players are made up (this server has one player); tickets and drops are real
+  let mut client = state.pool.get().await.context("failed to get database connection")?;
+  let ticket_remote = crate::api::battle::pay_boss_tickets(
+    &mut client,
+    &session,
+    crate::api::battle::BOSS_MULTI_MASTER,
+    params.event_id,
+    params.quest_id,
+    params.ticket_ratio,
+  )
+  .await?;
+  // The result only names the room: remember the boss, multiplier and team for it
+  MULTI_BOSS_BATTLES.lock().unwrap().insert(
+    session.user_id,
+    MultiBossBattle {
+      quest_id: params.quest_id,
+      ticket_ratio: params.ticket_ratio.max(1),
+      party_id: params.party_id,
+    },
+  );
+  info!(quest_id = params.quest_id, ticket_ratio = params.ticket_ratio, "multi boss battle started");
 
   // Same members and stats (affinity, Trial) as the other battles
   let (party, members) = crate::api::battle::battle_party_members(&client, session.user_id, params.party_id as i64).await?;
 
-  Ok(Unsigned(MarathonMultiStartResponse {
+  let mut response = CallResponse::new_success(Box::new(MarathonMultiStartResponse {
     user_host: vec![/*MarathonMultiStartUser {
       user_no: "-1".to_owned(),
       user_name: "Megumin".to_owned(),
@@ -342,8 +361,21 @@ pub async fn marathon_multi_start(
     will_use_ticket: 1,
     read_only_token: "stub_token".to_string(),
     get_log: true,
-  }))
+  }));
+  response.remote.extend(ticket_remote);
+  Ok(Unsigned(response))
 }
+
+/// The multiplayer boss battle each player started last.
+struct MultiBossBattle {
+  quest_id: i32,
+  ticket_ratio: i32,
+  party_id: i32,
+}
+
+static MULTI_BOSS_BATTLES: std::sync::LazyLock<
+  std::sync::Mutex<std::collections::HashMap<crate::user::id::UserId, MultiBossBattle>>,
+> = std::sync::LazyLock::new(Default::default);
 
 // See [Wonder_Api_MarathonMultiBattlingResponseDto_Fields]
 #[derive(Debug, Serialize)]
@@ -592,30 +624,54 @@ pub async fn marathon_multi_result(
   session: Arc<Session>,
   Params(params): Params<MarathonMultiResultRequest>,
 ) -> impl IntoHandlerResponse {
-  warn!(?params, "encountered stub: marathon_multi_result");
+  let battle = MULTI_BOSS_BATTLES.lock().unwrap().remove(&session.user_id);
+  let mut client = state.pool.get().await.context("failed to get database connection")?;
+  // A win counts for the event's boss missions and the boss list, and gives the boss's drops
+  // (same as the single boss, from the multiplayer stage's wave)
+  let mut reward = Vec::new();
+  let mut remote = Vec::new();
+  let (mut member_exp, mut love) = (Vec::new(), Vec::new());
+  if let Some(battle) = &battle {
+    if params.win != 0 {
+      let transaction = client.transaction().await.context("failed to start transaction")?;
+      crate::api::quest::progress::record_quest(&transaction, session.user_id, battle.quest_id, 1, [false; 3]).await?;
+      let (is_rare, items) =
+        crate::api::battle::boss_drop(crate::api::battle::BOSS_MULTI_MASTER, battle.quest_id, battle.ticket_ratio);
+      let mut wallet = Wallet::load(&transaction, session.user_id).await?;
+      remote.extend(crate::user::grant::grant_items(&transaction, session.user_id, &mut wallet, &items).await?);
+      wallet.save(&transaction, session.user_id).await?;
+      remote.extend(wallet.to_remote_data());
+      transaction.commit().await.context("failed to commit transaction")?;
+      reward = items
+        .iter()
+        .map(|&(itemtype, itemid, itemnum)| MultiBattleReward {
+          itemtype,
+          itemid,
+          itemnum,
+          is_rare: is_rare as i32,
+          is_mvp: 0,
+        })
+        .collect();
+      info!(quest_id = battle.quest_id, ratio = battle.ticket_ratio, ?items, "multi boss defeated");
+    }
+    let party = crate::api::battle::fetch_battle_party(&client, session.user_id, battle.party_id as i64).await?;
+    (member_exp, love) = crate::api::battle::make_battle_member_exp_and_character_love(&party, &client, &session, 0).await?;
+  } else {
+    warn!(?params, "multi boss result without a started battle, no rewards");
+  }
 
   // See [Wonder_Api_MarathonMultiLogResponseDto_Fields]
-  Ok(Unsigned(MarathonMultiResultResponse {
-    exp: 500,
-    lvup: 1,
-    money: 1000,
+  let mut response = CallResponse::new_success(Box::new(MarathonMultiResultResponse {
+    exp: 5,
+    lvup: 0,
+    // Eris are not stored for event bosses (no amount in the masters), don't show any
+    money: 0,
     friend_count: 0,
     request_count: 0,
-    love: vec![],
-    member_exp: vec![],
-    reward: vec![MultiBattleReward {
-      itemtype: RemoteDataItemType::RealMoney.into(),
-      itemid: 1,
-      itemnum: 100,
-      is_rare: 1,
-      is_mvp: 1,
-    }],
-    clearreward: vec![BattleClearReward {
-      itemtype: RemoteDataItemType::RealMoneyFree.into(),
-      itemid: 1,
-      itemnum: 5000,
-      mission: 1,
-    }],
+    love,
+    member_exp,
+    reward,
+    clearreward: vec![],
     user_host: vec![
       MarathonMultiResultUser {
         user_no: "-1".to_owned(),
@@ -801,7 +857,9 @@ pub async fn marathon_multi_result(
       },
     ],
     battle_id: params.battle_id,
-  }))
+  }));
+  response.remote.extend(remote);
+  Ok(Unsigned(response))
 }
 
 // See [Wonder_Api_MarathonMultiStampResponseDto_Fields]

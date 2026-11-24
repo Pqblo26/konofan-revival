@@ -571,7 +571,15 @@ pub async fn marathon_single_start(
   Params(params): Params<MarathonSingleStartRequest>,
 ) -> impl IntoHandlerResponse {
   let mut client = state.pool.get().await.context("failed to get database connection")?;
-  let ticket_remote = pay_boss_tickets(&mut client, &session, &params).await?;
+  let ticket_remote = pay_boss_tickets(
+    &mut client,
+    &session,
+    BOSS_SINGLE_MASTER,
+    params.event_id,
+    params.quest_id,
+    params.ticket_ratio,
+  )
+  .await?;
 
   // The result does not repeat the multiplier: remembered for its drops
   BOSS_TICKET_RATIO
@@ -592,29 +600,36 @@ pub async fn marathon_single_start(
   Ok(Unsigned(response))
 }
 
-/// Takes the boss tickets an event boss costs: the stage's "bossticket" times the multiplier the
-/// player chose, of the event's ticket item. Like stamina, the client checks first, so a shortage
-/// on the server only takes what there is.
-async fn pay_boss_tickets(
+/// Stages of the single and multiplayer event bosses.
+pub(crate) const BOSS_SINGLE_MASTER: &str = "event_marathon_quest_stage_boss_single";
+pub(crate) const BOSS_MULTI_MASTER: &str = "event_marathon_quest_stage_boss_multi";
+
+/// Takes the boss tickets an event boss costs: the stage's "bossticket" (in [master]) times the
+/// multiplier the player chose, of the event's ticket item. Like stamina, the client checks first,
+/// so a shortage on the server only takes what there is.
+pub(crate) async fn pay_boss_tickets(
   client: &mut deadpool_postgres::Client,
   session: &Session,
-  params: &MarathonSingleStartRequest,
+  master: &str,
+  event_id: i32,
+  quest_id: i32,
+  ticket_ratio: i32,
 ) -> anyhow::Result<Vec<RemoteData>> {
   let masters = get_master_manager();
   let cost = masters
-    .get_master("event_marathon_quest_stage_boss_single")
+    .get_master(master)
     .iter()
-    .find(|row| row["id"].as_str() == Some(&params.quest_id.to_string()))
+    .find(|row| row["id"].as_str() == Some(&quest_id.to_string()))
     .and_then(|row| row["bossticket"].as_str()?.parse::<i32>().ok())
     .unwrap_or(0)
-    * params.ticket_ratio.max(1);
+    * ticket_ratio.max(1);
   let ticket_id = masters
     .get_master("event_config")
     .iter()
-    .find(|row| row["event_id"].as_str() == Some(&params.event_id.to_string()))
+    .find(|row| row["event_id"].as_str() == Some(&event_id.to_string()))
     .and_then(|row| row["boss_ticket_id"].as_str()?.parse::<i64>().ok());
   let Some(ticket_id) = ticket_id.filter(|_| cost > 0) else {
-    warn!(?params, "event boss without ticket cost");
+    warn!(master, event_id, quest_id, "event boss without ticket cost");
     return Ok(Vec::new());
   };
 
@@ -626,14 +641,14 @@ async fn pay_boss_tickets(
     .map(|row| row.get(0))
     .unwrap_or(0);
   if owned < cost {
-    warn!(?params, ?owned, ?cost, "not enough boss tickets on the server, taking what there is");
+    warn!(quest_id, ?owned, ?cost, "not enough boss tickets on the server, taking what there is");
   }
   let item = UpdateItemCountBy::new(&transaction)
     .await?
     .run(session.user_id, (RemoteDataItemType::BossTicket, ticket_id), -cost.min(owned))
     .await?;
   transaction.commit().await.context("failed to commit transaction")?;
-  info!(?params, ?cost, left = item.quantity, "boss tickets spent");
+  info!(master, event_id, quest_id, ?cost, left = item.quantity, "boss tickets spent");
   Ok(item.into_remote_data())
 }
 
@@ -696,7 +711,7 @@ pub async fn marathon_single_result(
   if params.win != 0 {
     let transaction = client.transaction().await.context("failed to start transaction")?;
     crate::api::quest::progress::record_quest(&transaction, session.user_id, params.quest_id, 1, [false; 3]).await?;
-    let (is_rare, items) = boss_drop(params.quest_id, ratio);
+    let (is_rare, items) = boss_drop(BOSS_SINGLE_MASTER, params.quest_id, ratio);
     let mut wallet = Wallet::load(&transaction, session.user_id).await?;
     remote.extend(crate::user::grant::grant_items(&transaction, session.user_id, &mut wallet, &items).await?);
     wallet.save(&transaction, session.user_id).await?;
@@ -744,13 +759,13 @@ static BOSS_TICKET_RATIO: std::sync::LazyLock<std::sync::Mutex<HashMap<crate::us
 
 /// Drops of an event boss win. Its wave (`battle_wave`) chooses normal or rare by weight; the
 /// packs of that wave are `wave_id * 100 + n`, normal below 50 and rare from 50, one at random.
-/// The multiplier of tickets spent multiplies the amounts.
-fn boss_drop(quest_id: i32, ratio: i32) -> (bool, Vec<(i32, i64, i32)>) {
+/// The multiplier of tickets spent multiplies the amounts. [master] has the boss stages.
+pub(crate) fn boss_drop(master: &str, quest_id: i32, ratio: i32) -> (bool, Vec<(i32, i64, i32)>) {
   use rand::Rng;
   let masters = get_master_manager();
   let int = |row: &serde_json::Value, key: &str| row[key].as_str().and_then(|value| value.parse::<i64>().ok()).unwrap_or(0);
   let Some(wave_id) = masters
-    .get_master("event_marathon_quest_stage_boss_single")
+    .get_master(master)
     .iter()
     .find(|row| int(row, "id") == quest_id as i64)
     .map(|row| int(row, "wave_id1"))

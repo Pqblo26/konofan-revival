@@ -599,9 +599,13 @@ pub async fn mission_get_all(
   let body = &request.body;
   info!(?body, "missiongetall");
   let kind = body.get("type").and_then(|value| value.parse::<i32>().ok()).filter(|kind| *kind > 0);
+  // The game sends the missions it shows as receivable, from every tab
+  let requested = body
+    .get("mission_id_list")
+    .and_then(|list| serde_json::from_str::<Vec<i32>>(list).ok());
 
   let mut client = state.get_database_client().await?;
-  let progress = MissionState::load(&client, session.user_id).await?;
+  let mut progress = MissionState::load(&client, session.user_id).await?;
   let masters = get_masters().await;
   let missions: Vec<Value> = serde_json::from_str(&masters["mission"].master_decompressed).unwrap();
   let kind_of = |mission: &Value| match mission["mission_type"].as_str().unwrap_or("") {
@@ -609,31 +613,38 @@ pub async fn mission_get_all(
     "BEGINNER" => MissionKind::Beginner as i32,
     _ => MissionKind::Normal as i32,
   };
-  // The "all" missions go last, once the others count as received
-  let mut ready = missions
-    .iter()
-    .filter(|mission| kind.is_none_or(|kind| kind_of(mission) == kind))
-    .filter(|mission| !progress.is_received(mission) && progress.is_unlocked(mission))
-    .filter(|mission| {
-      mission_progress::target(mission).is_some_and(|target| progress.progress(mission) >= target)
-    })
-    .collect::<Vec<_>>();
-  ready.sort_by_key(|mission| mission["rule"].as_str().is_some_and(|rule| rule.starts_with("all_")));
-
+  // Receiving a mission can unlock the next one of its chain (enabled_id) or complete an "all"
+  // mission: repeat until nothing new is ready, like pressing the button again
   let mut items = Vec::new();
   let mut ids = Vec::new();
-  for mission in &ready {
-    if mission["rule"].as_str().is_some_and(|rule| rule.starts_with("all_")) {
-      // Count it only if the others received now complete it
-      continue;
+  for _ in 0..50 {
+    let ready = missions
+      .iter()
+      .filter(|mission| kind.is_none_or(|kind| kind_of(mission) == kind))
+      .filter(|mission| {
+        requested
+          .as_ref()
+          .is_none_or(|requested| requested.contains(&mission_progress::int(mission, "mission_id")))
+      })
+      .filter(|mission| !progress.is_received(mission) && progress.is_unlocked(mission))
+      .filter(|mission| {
+        mission_progress::target(mission).is_some_and(|target| progress.progress(mission) >= target)
+      })
+      .collect::<Vec<_>>();
+    if ready.is_empty() {
+      break;
     }
-    ids.push(mission_progress::int(mission, "mission_id"));
-    let pack_id = mission["pack_id"].as_str().unwrap_or("0");
-    items.extend(
-      crate::api::exchange::get_pack(pack_id)
-        .map(crate::api::exchange::pack_contents)
-        .unwrap_or_default(),
-    );
+    for mission in ready {
+      let mission_id = mission_progress::int(mission, "mission_id");
+      progress.mark_received(mission_id);
+      ids.push(mission_id);
+      let pack_id = mission["pack_id"].as_str().unwrap_or("0");
+      items.extend(
+        crate::api::exchange::get_pack(pack_id)
+          .map(crate::api::exchange::pack_contents)
+          .unwrap_or_default(),
+      );
+    }
   }
 
   let transaction = client.transaction().await.context("failed to start transaction")?;
