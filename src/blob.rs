@@ -483,6 +483,7 @@ pub async fn get_login_remote_data(state: &AppState, session: &Session) -> Vec<R
     .chain(backgrounds)
     .chain(items)
     .chain(weapons)
+    .chain(crate::api::assist::all_assists())
     .collect::<Vec<_>>()
 }
 
