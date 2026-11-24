@@ -111,6 +111,10 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
   - Pendiente visual: al volver de una práctica de Arena, el récord muestra la puntuación de la práctica hasta salir y entrar (los datos guardados están bien).
   - Armas y joyas desde regalos, canjes y lotes: se guardan en `user_items_equipment`, una fila por copia (`grant_equipment`, nombradas por `item_id_details`). Las joyas se guardan con tipo 6 (migración `20261124000001`). La lista de venta ya no se rompe con joyas (#63).
   - Banners de Reclutar en la base de datos (tabla `gacha.banners`, migración `20261124000002`): sin filas activas salen todos los del maestro (como antes) menos los desactivados; con alguna activa, solo esas, en su `sort_order`, con su tirada diaria (`daily`) y su ventana opcional `start_at`/`end_at`. Se quitó la lista vieja escrita a mano, que no se usaba (#64).
+  - Jefe del evento multijugador: cobra sus tickets al empezar (x1, x2…) y al ganar da su botín real, como el individual (oleada del maestro `event_marathon_quest_stage_boss_multi`), además de experiencia y afinidad del equipo. Los compañeros siguen siendo inventados. Antes enseñaba 100 gemas de pago y 5000 gratis que no se daban (#65).
+  - «Accept All» de Misiones: el juego sí manda `missiongetall`, con `mission_id_list` (las que ve cobrables). Ahora se cobran solo esas y, en las cadenas (Capítulo 1-2 → 1-3…), todos los pasos de una vez en lugar de uno por pulsación (#65).
+  - La misión de novato «Raise 1 character's Affinity to Lv. 3» (`member_friendlv`) ya cuenta la afinidad de los personajes (#65).
+  - Herrería: «Crafting Complete» sin fabricar nada. El login sumaba cantidades fijas de las capturas originales (materiales 1100 ×3, 5001 ×4, 151 ×1, ticket 17 ×2 y tickets de jefe 230831 ×3), así que el juego creía tener más de lo que hay en la base de datos. Quitadas (#65).
   - Los retos de mazmorra (`DungeonChallenge`) se dejan sin gastar a propósito: la respuesta de empezar zona no lleva contador y no sabemos cómo los descuenta el cliente; con intentos ilimitados se juega igual.
 - **Instalación local en Windows** (rama `instalacion-windows-mumu`): `scripts/konofan/setup-wsl.sh`, `scripts/konofan/mirror-assets.sh` y la guía [docs/konofan/INSTALAR-WINDOWS-MUMU.md](docs/konofan/INSTALAR-WINDOWS-MUMU.md). Probado de punta a punta en Ubuntu 24.04 (PostgreSQL 16, nginx, TLS), sin el juego.
 
@@ -119,11 +123,9 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
 - El **+ de las gemas** se queda cargando: el juego espera a Google Play Billing y la petición nunca llega al servidor. Solo se arregla en el cliente; de momento, gemas por el buzón.
 - Sin comprobar en el juego: que el cliente acepte rango y experiencia absolutos tras el combate (se mandan como las monedas) y que las fases bloqueadas se oculten bien.
 - Fame Potions: se pueden comprar, pero `use_supplement_num` al empezar una Fame Quest todavía no las gasta.
-- Jefe del evento multijugador: sin botín todavía (solo el individual, #56).
 - Battle Arena EX: sin implementar («Not available»). Los retos de mazmorra (`DungeonChallenge`) se compran pero no se gastan (intentos ilimitados).
 - Endpoints todavía en stub (~100 avisos `encountered stub` en el código): sorteo de eventos, compras que fallan por el cliente, vincular cuenta, etc.
-- Eventos sorpresa de ramas (branch): en stub, con equipo equivocado y la puntuación dada como gemas.
-- Misiones: «Accept All» no envía nada. Room Invitation y Transfer ID en stub. Party Power sale N/A en el perfil.
+- Room Invitation y Transfer ID en stub. Party Power sale N/A en el perfil.
 - Herramientas propias: **panel web** (Pablo lo quiere) para ver jugadores, tiradas y registros, y editar banners, probabilidades, eventos y personajes.
 
 ## Fallos encontrados jugando (2026-11-12)
@@ -136,7 +138,7 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
 | 4 | Help de Branch en blanco | Igual que el 3 | **Arreglado** con el 3 |
 | 5 | El «+» de gemas se queda cargando | No llega ninguna petición al servidor: el cliente espera a Google Play Billing, que en MuMu no responde | Baja prioridad: en local las gemas se dan por regalos o panel |
 
-Otros stubs vistos en el registro: misiones (`mission_home`; `mission_list` ya es real), trabajos/expediciones (`expedition_set`), mini eventos sorpresa, recompensas por anuncios, invitaciones multijugador, vincular cuenta (`idlink_confirm_google`), intercambio (`exchange`) y propuesta de equipo (`party_offer`).
+Otros stubs vistos en el registro: misiones (`mission_home`; `mission_list` ya es real), mini eventos sorpresa, recompensas por anuncios, invitaciones multijugador, vincular cuenta (`idlink_confirm_google`), intercambio (`exchange`) y propuesta de equipo (`party_offer`).
 
 ## Decisiones tomadas
 

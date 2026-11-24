@@ -59,6 +59,8 @@ pub struct MissionState {
   progress: ProgressMap,
   rank: i32,
   members: Vec<Member>,
+  /// Affinity level of each character the player has
+  affinity_levels: Vec<i32>,
   counters: HashMap<String, Counter>,
   /// Mission id -> day received (Japan time)
   received: HashMap<i32, NaiveDate>,
@@ -93,13 +95,24 @@ impl MissionState {
       select mission_id, (received_at at time zone 'Asia/Tokyo')::date from user_missions where user_id = $1
     "#, &[&user_id]).await.context("failed to read missions")?;
     let received = rows.iter().map(|row| (row.get(0), row.get(1))).collect();
-    Ok(MissionState { progress, rank, members, counters, received, today })
+    #[rustfmt::skip]
+    let rows = client.query(/* language=postgresql */ r#"
+      select intimacy from user_characters where user_id = $1
+    "#, &[&user_id]).await.context("failed to read characters")?;
+    let calculator = crate::level::get_intimacy_level_calculator();
+    let affinity_levels = rows.iter().map(|row| calculator.get_level(row.get::<_, i32>(0))).collect();
+    Ok(MissionState { progress, rank, members, affinity_levels, counters, received, today })
   }
 
   /// Shown in the list: missions in a chain appear once the previous one (enabled_id) is received.
   pub fn is_unlocked(&self, mission: &Value) -> bool {
     let previous = int(mission, "enabled_id");
     previous == 0 || self.received.contains_key(&previous)
+  }
+
+  /// Counts a mission as received now (for chains and "all" missions received together).
+  pub fn mark_received(&mut self, mission_id: i32) {
+    self.received.insert(mission_id, self.today);
   }
 
   /// Received (today, for daily missions).
@@ -175,6 +188,8 @@ impl MissionState {
       "battle_count_score_or_score_ex" => self.counter("score").today,
       "player_lv" => self.rank,
       "member_lv" => self.members.iter().filter(|member| member.level() >= y).count() as i32,
+      // Characters with affinity (intimacy) at level y or more
+      "member_friendlv" => self.affinity_levels.iter().filter(|level| **level >= y).count() as i32,
       "member_limitlv" => self.members.iter().filter(|member| member.promotion_level >= y).count() as i32,
       "gacha_count" => self.counter("gacha").total,
       "player_login" => self.counter("login").days,

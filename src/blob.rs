@@ -434,13 +434,11 @@ pub async fn get_login_remote_data(state: &AppState, session: &Session) -> Vec<R
     // AddMemberCostume::new(18, 2234241).into_remote_data(),
     // AddMemberCostume::new(17, 2244241).into_remote_data(),
     // AddMemberCostume::new(16, 2254241).into_remote_data(),
-    AddItem::new(RemoteDataItemType::MaterialWA, 2, 1100, 3).into_remote_data(),
-    AddItem::new(RemoteDataItemType::MaterialWA, 1, 5001, 4).into_remote_data(),
-    AddItem::new(RemoteDataItemType::MaterialLimit, 1, 151, 1).into_remote_data(),
     // AddItem::new(RemoteDataItemType::PowerPotion, 2, 1, 1).into_remote_data(),
     // AddItem::new(RemoteDataItemType::PowerPotion, 3, 2, 2).into_remote_data(),
     // AddItem::new(RemoteDataItemType::PowerPotion, 1, 3, 2).into_remote_data(),
-    AddItem::new(RemoteDataItemType::Ticket, 0, 17, 2).into_remote_data(),
+    // Materials, tickets and boss tickets come from user_items: fixed amounts from the captures
+    // here were added on top of them, so the game showed more than the server had
     AddSingletonItem::new(RemoteDataItemType::Level, progress.rank).into_remote_data(),
     AddSingletonItem::new(RemoteDataItemType::Exp, progress.exp).into_remote_data(),
     // AddMemberBackground::new(5, 1010).into_remote_data(),
@@ -449,7 +447,6 @@ pub async fn get_login_remote_data(state: &AppState, session: &Session) -> Vec<R
     // AddMemberBackground::new(2, 1013).into_remote_data(),
     // AddMemberBackground::new(1, 1090).into_remote_data(),
     // AddMemberBackground::new(6, 1180).into_remote_data(),
-    AddItem::new(RemoteDataItemType::BossTicket, 0, 230831, 3).into_remote_data(),
     AddItem::new(RemoteDataItemType::SlayerMedal, 0, 230731, 0).into_remote_data(),
     // TODO: { "cmd": 4, "item_type": 34, "item_id": 2, "item_num": 3, "uniqid": 0, "lv": 0, "tag": "-" }
     // TODO: { "cmd": 4, "item_type": 34, "item_id": 1, "item_num": 0, "uniqid": 0, "lv": 0, "tag": "-" }
