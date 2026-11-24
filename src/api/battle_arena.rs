@@ -566,7 +566,8 @@ pub async fn score_challenge_result(
   info!(quest_id = params.quest_id, score, practice, total = after.total(), "arena battle finished");
 
   let mut response = CallResponse::new_success(Box::new(ScoreChallengeResultResponse {
-    challengenum: after.attempts_left(),
+    // The game subtracts this from the attempts it shows (3 left made it show 0/3 after a practice)
+    challengenum: if practice { 0 } else { 1 },
     reward,
     totalrewardids: total_reward_ids,
     rank: if after.total() > 0 { 1 } else { 0 },
