@@ -110,6 +110,8 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
   - «Select Dungeon» salía con un cartel rosa: las mazmorras 2-8 no tienen su imagen (`dungeon_banner_N.png`) en los catálogos del juego. La rotación semanal ya no las elige (#62).
   - Pendiente visual: al volver de una práctica de Arena, el récord muestra la puntuación de la práctica hasta salir y entrar (los datos guardados están bien).
   - Armas y joyas desde regalos, canjes y lotes: se guardan en `user_items_equipment`, una fila por copia (`grant_equipment`, nombradas por `item_id_details`). Las joyas se guardan con tipo 6 (migración `20261124000001`). La lista de venta ya no se rompe con joyas (#63).
+  - Banners de Reclutar en la base de datos (tabla `gacha.banners`, migración `20261124000002`): sin filas activas salen todos los del maestro (como antes) menos los desactivados; con alguna activa, solo esas, en su `sort_order`, con su tirada diaria (`daily`) y su ventana opcional `start_at`/`end_at`. Se quitó la lista vieja escrita a mano, que no se usaba (#64).
+  - Los retos de mazmorra (`DungeonChallenge`) se dejan sin gastar a propósito: la respuesta de empezar zona no lleva contador y no sabemos cómo los descuenta el cliente; con intentos ilimitados se juega igual.
 - **Instalación local en Windows** (rama `instalacion-windows-mumu`): `scripts/konofan/setup-wsl.sh`, `scripts/konofan/mirror-assets.sh` y la guía [docs/konofan/INSTALAR-WINDOWS-MUMU.md](docs/konofan/INSTALAR-WINDOWS-MUMU.md). Probado de punta a punta en Ubuntu 24.04 (PostgreSQL 16, nginx, TLS), sin el juego.
 
 ## Qué falta
@@ -118,8 +120,7 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
 - Sin comprobar en el juego: que el cliente acepte rango y experiencia absolutos tras el combate (se mandan como las monedas) y que las fases bloqueadas se oculten bien.
 - Fame Potions: se pueden comprar, pero `use_supplement_num` al empezar una Fame Quest todavía no las gasta.
 - Jefe del evento multijugador: sin botín todavía (solo el individual, #56).
-- Battle Arena EX: sin implementar («Not available»). Los retos de mazmorra (`DungeonChallenge`) se compran pero aún no se gastan.
-- Los banners están escritos a mano en `gacha_info()` (`src/api/gacha.rs`); hay que pasarlos a la base de datos para poder editarlos.
+- Battle Arena EX: sin implementar («Not available»). Los retos de mazmorra (`DungeonChallenge`) se compran pero no se gastan (intentos ilimitados).
 - Endpoints todavía en stub (~100 avisos `encountered stub` en el código): sorteo de eventos, compras que fallan por el cliente, vincular cuenta, etc.
 - Eventos sorpresa de ramas (branch): en stub, con equipo equivocado y la puntuación dada como gemas.
 - Misiones: «Accept All» no envía nada. Room Invitation y Transfer ID en stub. Party Power sale N/A en el perfil.
@@ -157,5 +158,5 @@ Otros stubs vistos en el registro: misiones (`mission_home`; `mission_list` ya e
 
 1. Pablo: seguir la guía de instalación y llegar al menú principal en MuMu.
 2. Probar una tirada en un banner con probabilidades importadas y revisar el log `gacha draw`.
-3. Pasar los banners de `gacha_info()` a la base de datos.
+3. ~~Pasar los banners de `gacha_info()` a la base de datos.~~ Hecho (#64, `gacha.banners`).
 4. Editor de banners y probabilidades.
