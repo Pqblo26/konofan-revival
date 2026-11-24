@@ -61,7 +61,10 @@ pub(crate) enum Grant {
   Item,
   /// Members (a reserve copy if already owned), see [crate::user::grant::grant_member].
   Member,
-  /// Equipment and other unique things: not supported yet, stay in the gift box.
+  /// Weapons and accessories, one row each in `user_items_equipment`, see
+  /// [crate::user::grant::grant_equipment].
+  Equipment,
+  /// Other unique things: not supported yet, stay in the gift box.
   Unsupported,
 }
 
@@ -70,8 +73,8 @@ pub(crate) fn grant_kind(item_type: RemoteDataItemType) -> Grant {
   match item_type {
     Money | RealMoney | RealMoneyFree | Stamina => Grant::Singleton,
     Member => Grant::Member,
-    Weapon | Accessory | Character | SpecialSkill | MemberCostume | MemberBackground | Assist | Exp
-    | Level | FameRank => Grant::Unsupported,
+    Weapon | Accessory => Grant::Equipment,
+    Character | SpecialSkill | MemberCostume | MemberBackground | Assist | Exp | Level | FameRank => Grant::Unsupported,
     _ => Grant::Item,
   }
 }
@@ -321,6 +324,9 @@ pub async fn present_get(
         for _ in 0..item_num.max(1) {
           remote.extend(crate::user::grant::grant_member(&transaction, session.user_id, item_id).await?);
         }
+      }
+      Grant::Equipment => {
+        remote.extend(crate::user::grant::grant_equipment(&transaction, session.user_id, item_type, item_id, item_num).await?);
       }
       Grant::Unsupported => {
         warn!(
