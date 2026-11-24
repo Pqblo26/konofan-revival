@@ -107,6 +107,8 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
   - Jefe del evento: cada victoria da su botín real (medallas de canje 240111/240112, materiales y Eris): la oleada (`battle_wave`) elige normal o raro por peso y se da uno de sus lotes (`wave_id * 100 + n`, raros desde 50), multiplicado por los tickets usados (x1, x2…). Su combate lleva ya la afinidad y el Trial. No hay límite diario: lo limita el gasto de tickets, como en el juego (#56).
   - La afinidad y el Trial también cuentan en Arena, jefe multijugador y mazmorras (en mazmorras todo menos la vida, porque la partida guarda la vida de cada miembro contra el máximo de la pantalla de equipo) (#60).
   - El ayudante ya sale en la preparación de combate nada más entrar al juego: el login manda los ayudantes (antes solo llegaban al abrir Team). Tras una práctica de Arena, el juego ya no muestra 0/3 intentos: `challengenum` es lo que se descuenta (0 en práctica, 1 si no) (#61).
+  - «Select Dungeon» salía con un cartel rosa: las mazmorras 2-8 no tienen su imagen (`dungeon_banner_N.png`) en los catálogos del juego. La rotación semanal ya no las elige (#62).
+  - Pendiente visual: al volver de una práctica de Arena, el récord muestra la puntuación de la práctica hasta salir y entrar (los datos guardados están bien).
 - **Instalación local en Windows** (rama `instalacion-windows-mumu`): `scripts/konofan/setup-wsl.sh`, `scripts/konofan/mirror-assets.sh` y la guía [docs/konofan/INSTALAR-WINDOWS-MUMU.md](docs/konofan/INSTALAR-WINDOWS-MUMU.md). Probado de punta a punta en Ubuntu 24.04 (PostgreSQL 16, nginx, TLS), sin el juego.
 
 ## Qué falta

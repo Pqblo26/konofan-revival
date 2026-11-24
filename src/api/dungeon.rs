@@ -620,13 +620,14 @@ fn stage_chest(stage: &Value) -> String {
 }
 
 /// The event dungeon that is open: the original ran one for a week at a time and they are all
-/// past now, so they take turns by week. Only dungeons with banner images in the asset mirror
-/// (1-10 and 15-27; 11-14 and 99 show a pink placeholder).
+/// past now, so they take turns by week. Only dungeons whose "Select Dungeon" banner
+/// (`DungeonButton/DungeonList/dungeon_banner_N.png`) is in the asset catalogs: 1 and 9-31.
+/// 2-8 (and 11-14, 99) show a pink placeholder.
 fn current_dungeon_id(now: DateTime<Utc>) -> i32 {
   let ids = get_master_manager()
     .get_master("dungeon")
     .iter()
-    .filter(|row| int(row, "type") == 1 && int(row, "id") != 99)
+    .filter(|row| int(row, "type") == 1 && int(row, "id") != 99 && !(2..=8).contains(&int(row, "id")))
     .map(|row| int(row, "id"))
     .collect::<Vec<_>>();
   if ids.is_empty() {
