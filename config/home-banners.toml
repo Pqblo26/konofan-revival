@@ -6,7 +6,8 @@
 #
 # Para buscar más: en master/banner.json, `destination_type` dice a dónde lleva el banner
 # (GACHA, EVENT, SHOP, DUNGEON, WEB...) y `destination_option` el ID del destino.
-# Los de GACHA solo funcionan si ese gacha está en la lista de Reclutar (src/api/gacha.rs).
+# Los de GACHA solo funcionan si ese gacha sale en Reclutar (tabla gacha.banners; sin filas
+# activas salen todos los del maestro).
 ids = [
   1248, # Evento "Etiquette for This New Year's Party!" (24011, el que el servidor deja activo)
   1076, # Gacha 410535
