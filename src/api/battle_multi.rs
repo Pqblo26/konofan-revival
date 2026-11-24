@@ -297,19 +297,8 @@ pub async fn marathon_multi_start(
 
   let client = state.pool.get().await.context("failed to get database connection")?;
 
-  let party = crate::api::battle::fetch_battle_party(&client, session.user_id, params.party_id as i64).await?;
-
-  // We must send only members that are used in the party, otherwise hardlock occurs
-  let fetch_members = FetchUserMembersIn::new(&client).await.unwrap();
-  #[rustfmt::skip]
-  let mut members = fetch_members.run(
-    session.user_id,
-    &party.member_ids(),
-  ).await.unwrap();
-  FetchUserMemberSkillsIn::new(&client)
-    .await?
-    .run(session.user_id, &mut members.iter_mut().collect::<Vec<_>>())
-    .await?;
+  // Same members and stats (affinity, Trial) as the other battles
+  let (party, members) = crate::api::battle::battle_party_members(&client, session.user_id, params.party_id as i64).await?;
 
   Ok(Unsigned(MarathonMultiStartResponse {
     user_host: vec![/*MarathonMultiStartUser {
@@ -347,12 +336,8 @@ pub async fn marathon_multi_start(
       status: 0,
     },],
     chest: "10101111,10101120,10101131".to_string(),
-    party: party.to_battle_party(),
-    // We must send only members that are used in the party, otherwise hardlock occurs
-    members: members
-      .into_iter()
-      .filter_map(|member| Some(member.to_battle_member(party.form_of(member.id)?)))
-      .collect(),
+    party,
+    members,
     battle_id: 1,
     will_use_ticket: 1,
     read_only_token: "stub_token".to_string(),

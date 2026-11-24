@@ -1498,6 +1498,7 @@ pub async fn dungeon_battle_start(
   }
   let team = load_team(&client, session.user_id, run.as_ref().map(|run| run.members.as_slice()), member_num).await?;
   let party_set = build_party_set(&team, run.as_ref(), dungeon_trait(&client, session.user_id).await?);
+  let bonuses = crate::api::character_enhance::character_bonuses(&client, session.user_id).await?;
   let party = &party_set.stage_party_set.party;
   let fighting = party
     .iter()
@@ -1538,7 +1539,21 @@ pub async fn dungeon_battle_start(
       .iter()
       .take(5)
       .flat_map(|member| std::iter::once(*member).chain(team.subs_of(member.id)))
-      .map(|member| member.to_dungeon_battle_member())
+      .map(|member| {
+        let mut member = member.to_dungeon_battle_member();
+        // Affinity and Trial bonuses, as in the other battles. Not HP: the run keeps each
+        // member's HP against the maximum the team screens show
+        if let Some(bonus) = bonuses.get(&member.character_id) {
+          member.attack += bonus[1];
+          member.magicattack += bonus[2];
+          member.defense += bonus[3];
+          member.magicdefence += bonus[4];
+          member.agility += bonus[5];
+          member.dexterity += bonus[6];
+          member.luck += bonus[7];
+        }
+        member
+      })
       .collect(),
     resume_info: "".to_string(),
     livemembers: party
