@@ -109,12 +109,12 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
   - El ayudante ya sale en la preparación de combate nada más entrar al juego: el login manda los ayudantes (antes solo llegaban al abrir Team). Tras una práctica de Arena, el juego ya no muestra 0/3 intentos: `challengenum` es lo que se descuenta (0 en práctica, 1 si no) (#61).
   - «Select Dungeon» salía con un cartel rosa: las mazmorras 2-8 no tienen su imagen (`dungeon_banner_N.png`) en los catálogos del juego. La rotación semanal ya no las elige (#62).
   - Pendiente visual: al volver de una práctica de Arena, el récord muestra la puntuación de la práctica hasta salir y entrar (los datos guardados están bien).
+  - Armas y joyas desde regalos, canjes y lotes: se guardan en `user_items_equipment`, una fila por copia (`grant_equipment`, nombradas por `item_id_details`). Las joyas se guardan con tipo 6 (migración `20261124000001`). La lista de venta ya no se rompe con joyas (#63).
 - **Instalación local en Windows** (rama `instalacion-windows-mumu`): `scripts/konofan/setup-wsl.sh`, `scripts/konofan/mirror-assets.sh` y la guía [docs/konofan/INSTALAR-WINDOWS-MUMU.md](docs/konofan/INSTALAR-WINDOWS-MUMU.md). Probado de punta a punta en Ubuntu 24.04 (PostgreSQL 16, nginx, TLS), sin el juego.
 
 ## Qué falta
 
 - El **+ de las gemas** se queda cargando: el juego espera a Google Play Billing y la petición nunca llega al servidor. Solo se arregla en el cliente; de momento, gemas por el buzón.
-- Armas y accesorios no se pueden dar desde regalos ni canjes todavía.
 - Sin comprobar en el juego: que el cliente acepte rango y experiencia absolutos tras el combate (se mandan como las monedas) y que las fases bloqueadas se oculten bien.
 - Fame Potions: se pueden comprar, pero `use_supplement_num` al empezar una Fame Quest todavía no las gasta.
 - Jefe del evento multijugador: sin botín todavía (solo el individual, #56).

@@ -70,9 +70,10 @@ pub async fn sale_list(
 
   let items = match params.kind {
     SaleListKind::Equipment => {
-      // (item_id, level) -> item_id_details
+      // (item_id, level) -> item_id_details, of weapons and accessories (their item ids differ)
       let item_to_item_details: HashMap<(i64, i32), i64> = equip_weapon_details
         .iter()
+        .chain(get_master_manager().get_master("equip_accessory_details").iter())
         .map(|data| {
           let item_id: i64 = data["item_id"].as_str().unwrap().parse::<i64>().unwrap();
           let level: i32 = data["lv"].as_str().unwrap().parse::<i32>().unwrap();
@@ -102,14 +103,16 @@ pub async fn sale_list(
 
       rows
         .iter()
-        .map(|item| {
+        .filter_map(|item| {
           let item_id = item.get::<_, i64>("item_id");
           let level = item.get::<_, i32>("level");
-          let item_details_id = *item_to_item_details
-            .get(&(item_id, level))
-            .expect(&format!("missing item details for item_id={} level={}", item_id, level));
+          // An unknown row must not break the list
+          let Some(&item_details_id) = item_to_item_details.get(&(item_id, level)) else {
+            warn!(item_id, level, "equipment without master details, not listed");
+            return None;
+          };
 
-          SaleItem {
+          Some(SaleItem {
             item_type: item.get::<_, i64>("item_type") as i32,
             item_id: item_details_id,
             target_item_id: item.get::<_, i64>("id"),
@@ -117,7 +120,7 @@ pub async fn sale_list(
             islock: item.get::<_, bool>("is_locked"),
             isuse: false,
             trial: false,
-          }
+          })
         })
         .collect()
     }

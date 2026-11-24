@@ -160,10 +160,50 @@ pub async fn grant_items(
         let counted = update.run(user_id, (kind, item_id), item_num).await?;
         remote.extend(counted.into_remote_data());
       }
+      Grant::Equipment => {
+        remote.extend(grant_equipment(transaction, user_id, kind, item_id, item_num).await?);
+      }
       Grant::Unsupported => {
         warn!(?item_type, ?item_id, ?item_num, "reward type not supported yet, not given");
       }
     }
   }
+  Ok(remote)
+}
+
+/// Gives [num] copies of a weapon or accessory. Rewards name it by `item_id_details` (the item at a
+/// level, e.g. 374006 = item 37400 at level 6); each copy is its own row in `user_items_equipment`.
+pub async fn grant_equipment(
+  transaction: &deadpool_postgres::Transaction<'_>,
+  user_id: UserId,
+  kind: RemoteDataItemType,
+  details_id: i64,
+  num: i32,
+) -> anyhow::Result<Vec<RemoteData>> {
+  let master = match kind {
+    RemoteDataItemType::Accessory => "equip_accessory_details",
+    _ => "equip_weapon_details",
+  };
+  let int = |row: &serde_json::Value, key: &str| row[key].as_str().and_then(|value| value.parse::<i64>().ok()).unwrap_or(0);
+  let Some(details) = get_master_manager()
+    .get_master(master)
+    .iter()
+    .find(|row| int(row, "item_id_details") == details_id)
+  else {
+    warn!(?kind, details_id, "unknown equipment, not given");
+    return Ok(Vec::new());
+  };
+  let (item_id, level) = (int(details, "item_id"), int(details, "lv") as i32);
+  let mut remote = Vec::new();
+  for _ in 0..num.max(1) {
+    #[rustfmt::skip]
+    let row = transaction.query_one(/* language=postgresql */ r#"
+      insert into user_items_equipment (user_id, item_type, item_id, level) values ($1, $2, $3, $4)
+      returning id
+    "#, &[&user_id, &(i32::from(kind) as i64), &item_id, &level]).await.context("failed to add equipment")?;
+    let id: i64 = row.get(0);
+    remote.extend(crate::blob::AddEquipment::new(kind, details_id, id as i32, false).into_remote_data());
+  }
+  info!(%user_id, ?kind, item_id, level, num, "granted equipment");
   Ok(remote)
 }
