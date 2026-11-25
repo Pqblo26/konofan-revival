@@ -186,6 +186,83 @@ fn to_items(rewards: &[ExReward]) -> Vec<(i32, i64, i32)> {
   rewards.iter().map(|r| (r.item_type, r.item_id, r.item_num)).collect()
 }
 
+// Client constants of Arena EX (enum in dump.cs, TypeDefIndex 10058)
+const DEFENSE_BONUS_BIAS: f64 = 125000.0;
+const MAX_HP_SUM: f64 = 8900.0;
+const MIN_TOTAL_RECEIVED_DAMAGE: f64 = 1000.0;
+/// The battle clock starts at 1:00; `battletime` is the game seconds that went by
+const BATTLE_SECONDS: f64 = 60.0;
+
+/// Score of an Arena EX battle. The client only sends what happened (damage dealt and taken,
+/// seconds, survivors) and shows the parts the server returns. The server masters with the time and
+/// survival tables were never published, so this follows the in-game help with our own numbers:
+/// - base: damage dealt x stage difficulty x time bonus (1 to 2, longer battles score more)
+/// - bonus by the stage's type: Defense gives more the less damage was taken (with the client's
+///   constants) x survival bonus (+0.1 per survivor); Physical/Magic give that damage x difficulty
+/// - total: (base + bonus) x low rarity bonus (only stages with `rarity_bonus_id`)
+struct ExScore {
+  basic: i64,
+  bonus: i64,
+  total: i64,
+  time_coefficient: f64,
+  survival_coefficient: f64,
+  rarity_coefficient: f64,
+}
+
+impl ExScore {
+  fn from_battle(body: &HashMap<String, String>, stage_id: i32) -> ExScore {
+    let stage = get_master_manager()
+      .get_master("scorechallenge_ex_stage")
+      .iter()
+      .find(|row| int(row, "id") == stage_id as i64);
+    let difficulty = stage.map(|row| int(row, "difficulty_coefficient")).unwrap_or(1).max(1) as f64;
+    let bonus_type = stage.map(|row| int(row, "bonus_type")).unwrap_or(0);
+
+    // A client that sends the score itself (like the normal arena) is trusted as is
+    if let Some(score) = param(body, &["score"]) {
+      let score = match param(body, &["seed"]) {
+        Some(seed) => (score ^ seed) as i32 as i64,
+        None => score,
+      }
+      .max(0);
+      return ExScore { basic: score, bonus: 0, total: score, time_coefficient: 1.0, survival_coefficient: 1.0, rarity_coefficient: 1.0 };
+    }
+
+    let value = |keys: &[&str]| param(body, keys).unwrap_or(0).max(0) as f64;
+    let dealt = value(&["total_hit_damage"]);
+    let seconds = value(&["battletime"]).min(BATTLE_SECONDS);
+    let survivors = value(&["survivor_num"]).min(5.0);
+    let time_coefficient = round2(1.0 + seconds / BATTLE_SECONDS);
+    let survival_coefficient = round2(1.0 + 0.1 * survivors);
+    let basic = (dealt * difficulty * time_coefficient).round();
+    let bonus = if dealt <= 0.0 {
+      0.0
+    } else {
+      match bonus_type {
+        1 => {
+          let taken = value(&["total_received_damage"]).max(MIN_TOTAL_RECEIVED_DAMAGE);
+          (DEFENSE_BONUS_BIAS * MAX_HP_SUM / taken * survival_coefficient).round()
+        }
+        2 => (value(&["physical_hit_damage"]) * difficulty * survival_coefficient).round(),
+        3 => (value(&["magical_hit_damage"]) * difficulty * survival_coefficient).round(),
+        _ => 0.0,
+      }
+    };
+    let rarity_coefficient = 1.0;
+    let total = ((basic + bonus) * rarity_coefficient).round() as i64;
+    ExScore { basic: basic as i64, bonus: bonus as i64, total, time_coefficient, survival_coefficient, rarity_coefficient }
+  }
+}
+
+fn round2(value: f64) -> f64 {
+  (value * 100.0).round() / 100.0
+}
+
+fn format_coefficient(value: f64) -> String {
+  let text = format!("{:.2}", value);
+  text.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
 // See [Wonder_Api_ScorechallengeExInfoResponseDto_Fields]
 #[derive(Debug, Serialize)]
 pub struct ScoreChallengeExInfoResponse {
@@ -284,18 +361,12 @@ pub async fn score_challenge_ex_result(
   let body = &request.body;
   info!(?body, "arena ex result");
   let (season, score_type) = current_season().context("no arena ex season open")?;
-  // Same scrambling as the normal arena when it sends a seed
-  let score = match (param(body, &["score"]), param(body, &["seed"])) {
-    (Some(score), Some(seed)) => (score ^ seed) as i32 as i64,
-    (Some(score), None) => score,
-    _ => param(body, &["original_score", "total_score"]).unwrap_or(0),
-  };
-  if let Some(original) = param(body, &["original_score"]) {
-    if original != score {
-      warn!(score, original, "arena ex score check failed, using the decrypted score");
-    }
-  }
-  let score = score.max(0);
+  let stage_id = param(body, &["quest_id", "stage_id"])
+    .map(|v| v as i32)
+    .or_else(|| season_stages(season).first().copied())
+    .context("arena ex season without stages")?;
+  let breakdown = ExScore::from_battle(body, stage_id);
+  let score = breakdown.total;
 
   let mut client = state.get_database_client().await?;
   let transaction = client.transaction().await.context("failed to start transaction")?;
@@ -350,19 +421,17 @@ pub async fn score_challenge_ex_result(
   transaction.commit().await.context("failed to commit transaction")?;
   info!(quest_id, score, counts, achievement, "arena ex battle finished");
 
-  let coefficient = |key: &str| body.get(key).cloned().unwrap_or_else(|| "1".to_owned());
-  let basic_score = param(body, &["basic_score"]).unwrap_or(score);
   let mut response = CallResponse::new_success(Box::new(ScoreChallengeExResultResponse {
     previous_bestscore: clamp_score(previous_best),
     bestscore: clamp_score(if counts { previous_best.max(score) } else { previous_best }),
     modescore: clamp_score(score),
     total_score: clamp_score(score),
-    basic_score: clamp_score(basic_score),
-    battletime_coefficient: coefficient("battletime_coefficient"),
-    bonus_score: clamp_score(param(body, &["bonus_score"]).unwrap_or(0)),
-    survival_coefficient: coefficient("survival_coefficient"),
-    character_bonus_coefficient: coefficient("character_bonus_coefficient"),
-    rarity_bonus_coefficient: coefficient("rarity_bonus_coefficient"),
+    basic_score: clamp_score(breakdown.basic),
+    battletime_coefficient: format_coefficient(breakdown.time_coefficient),
+    bonus_score: clamp_score(breakdown.bonus),
+    survival_coefficient: format_coefficient(breakdown.survival_coefficient),
+    character_bonus_coefficient: format_coefficient(1.0),
+    rarity_bonus_coefficient: format_coefficient(breakdown.rarity_coefficient),
     reward,
     score_img_type: rank.map(|(_, img)| img).unwrap_or(1),
     achievement_score: achievement,
