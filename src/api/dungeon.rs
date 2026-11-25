@@ -770,6 +770,8 @@ impl DungeonRun {
                                      benefits, offered, relottery_count, knockouts, clear_rank, clear_rewards)
       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       on conflict (user_id) do update set
+        -- A run in another area replaces the old one: it starts now
+        started_at = case when user_dungeon_runs.area_id = excluded.area_id then user_dungeon_runs.started_at else now() end,
         area_id = excluded.area_id, stage_id = excluded.stage_id, is_practice = excluded.is_practice,
         members = excluded.members, member_hp = excluded.member_hp, enemy_hp = excluded.enemy_hp,
         benefits = excluded.benefits, offered = excluded.offered, relottery_count = excluded.relottery_count,

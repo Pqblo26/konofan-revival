@@ -5,9 +5,9 @@
 # home-banners.toml). En el juego original solían coincidir 2 o 3. Tras cambiarlo, reinicia el
 # servidor.
 #
-# Probado en el juego: 24011. Los demás son candidatos (eventos de historia con jefe, tipo 1, con su
-# tienda de canje), sin probar todavía:
-#   24041  A Service For This Forbidden Weakest Adventurer!
+# Probado en el juego: 24011 y 24041 (este último sin imágenes en los recursos descargados: su banner
+# y el de su canje salen en blanco). Los demás son candidatos (eventos de historia con jefe, tipo 1,
+# con su tienda de canje), todos con sus dos imágenes salvo 23033, al que le falta la del canje:
 #   23111  A Guidance to This Princess and The Hero of Cursed Sword!
 #   23101  Friends for This Forbidden Loner!
 #   23091  God's Blessing on This Fantastic Adventurer!
@@ -21,4 +21,5 @@
 # Hunt», «Axel's Angel Squad») funcionan distinto: probarlos antes de dejarlos fijos.
 ids = [
   24011, # Etiquette for This New Year's Party!
+  23111, # A Guidance to This Princess and The Hero of Cursed Sword!
 ]

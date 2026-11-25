@@ -285,13 +285,27 @@ pub struct ScoreChallengeMissionDisplayBestScoreInfo {
   pub previous_best_score: i32,
 }
 
-pub async fn score_challenge_mission() -> impl IntoHandlerResponse {
-  warn!("encountered stub: score_challenge_mission");
-
-  Ok(Unsigned(ScoreChallengeMissionResponse {
-    best_score_info: vec![],
-    display_best_score_info: vec![],
-  }))
+/// Arena missions: for each element, the best arena total among the arenas of that element.
+pub async fn score_challenge_mission(state: Arc<AppState>, session: Arc<Session>) -> impl IntoHandlerResponse {
+  let client = state.get_database_client().await?;
+  let bests = element_bests(&client, session.user_id).await?;
+  let mut best_score_info = Vec::new();
+  let mut display_best_score_info = Vec::new();
+  for element in MISSION_ELEMENTS {
+    let (score, arena) = bests.get(*element).copied().unwrap_or((0, 0));
+    best_score_info.push(ScoreChallengeMissionBestScoreInfo {
+      elemental: element.to_string(),
+      scorechallenge_id: arena,
+      best_score: clamp_score(score),
+      reward_type: 0,
+    });
+    display_best_score_info.push(ScoreChallengeMissionDisplayBestScoreInfo {
+      elemental: element.to_string(),
+      best_score: clamp_score(score),
+      previous_best_score: clamp_score(score),
+    });
+  }
+  Ok(Unsigned(ScoreChallengeMissionResponse { best_score_info, display_best_score_info }))
 }
 
 // See [Wonder_Api_ScorechallengeMissionListResponseDto_Fields]
@@ -309,12 +323,79 @@ pub struct ScoreChallengeMissionListInfo {
   pub achieve_flag: i32,
 }
 
-pub async fn score_challenge_mission_list() -> impl IntoHandlerResponse {
-  warn!("encountered stub: score_challenge_mission_list");
-
+pub async fn score_challenge_mission_list(state: Arc<AppState>, session: Arc<Session>) -> impl IntoHandlerResponse {
+  let client = state.get_database_client().await?;
+  let bests = element_bests(&client, session.user_id).await?;
   Ok(Unsigned(ScoreChallengeMissionListResponse {
-    scorechallenge_mission_list: vec![],
+    scorechallenge_mission_list: get_master_manager()
+      .get_master("scorechallenge_mission")
+      .iter()
+      .map(|row| {
+        let best = row["attribute"].as_str().and_then(|element| bests.get(element)).map(|(score, _)| *score).unwrap_or(0);
+        ScoreChallengeMissionListInfo {
+          mission_id: int(row, "id"),
+          achieve_flag: (best >= int(row, "score") as i64) as i32,
+        }
+      })
+      .collect(),
   }))
+}
+
+const MISSION_ELEMENTS: &[&str] = &["fire", "water", "wind", "earth", "thunder", "light", "cursed"];
+
+/// Element of an arena: the element of its stages' boss.
+fn arena_element(score_challenge_id: i32) -> Option<&'static str> {
+  get_master_manager()
+    .get_master("scorechallenge_stage")
+    .iter()
+    .find(|row| int(row, "scorechallenge_id") == score_challenge_id)
+    .and_then(|row| row["attr1"].as_str())
+    .filter(|element| MISSION_ELEMENTS.contains(element))
+}
+
+/// Best arena total (sum of the three modes' bests) by element, with the arena it was made in.
+async fn element_bests<'a>(executor: impl Into<QueryExecutor<'a>>, user_id: UserId) -> anyhow::Result<HashMap<String, (i64, i32)>> {
+  let executor = executor.into();
+  #[rustfmt::skip]
+  let rows = executor.client().query(/* language=postgresql */ r#"
+    select quest_id, best_score from user_score_challenge_best where user_id = $1 and quest_id > 0
+  "#, &[&user_id]).await.context("failed to read arena scores")?;
+  let mut totals = HashMap::<i32, [i64; 3]>::new();
+  for row in &rows {
+    if let Some((arena, mode, _)) = arena_of_stage(row.get(0)) {
+      if (1..=3).contains(&mode) {
+        let best = &mut totals.entry(arena).or_default()[(mode - 1) as usize];
+        *best = (*best).max(row.get(1));
+      }
+    }
+  }
+  let mut bests = HashMap::<String, (i64, i32)>::new();
+  for (arena, modes) in totals {
+    let Some(element) = arena_element(arena) else { continue };
+    let total = modes.iter().sum::<i64>();
+    let entry = bests.entry(element.to_owned()).or_insert((0, arena));
+    if total > entry.0 {
+      *entry = (total, arena);
+    }
+  }
+  Ok(bests)
+}
+
+/// Arena missions of [element] reached when its best goes from [before] to [after].
+fn arena_mission_rewards(element: &str, before: i64, after: i64) -> Vec<(i32, i64, i32)> {
+  get_master_manager()
+    .get_master("scorechallenge_mission")
+    .iter()
+    .filter(|row| row["attribute"].as_str() == Some(element))
+    .filter(|row| {
+      let needed = int(row, "score") as i64;
+      before < needed && needed <= after
+    })
+    .flat_map(|row| {
+      info!(mission_id = int(row, "id"), element, "arena mission reached");
+      row["pack_id"].as_str().and_then(get_pack).map(pack_contents).unwrap_or_default()
+    })
+    .collect()
 }
 
 // See [Wonder_Api_EventScorechallengeLogRequest_Fields]
@@ -527,6 +608,11 @@ pub async fn score_challenge_result(
     .unwrap_or(false);
 
   let before = load_arena(&transaction, session.user_id, score_challenge_id).await?;
+  let element = arena_element(score_challenge_id);
+  let element_before = match element {
+    Some(element) => element_bests(&transaction, session.user_id).await?.get(element).map(|(score, _)| *score).unwrap_or(0),
+    None => 0,
+  };
   let previous_best = before.best.get((mode - 1).clamp(0, 2) as usize).copied().unwrap_or(0);
   let mut reward = Vec::new();
   let mut total_reward_ids = Vec::new();
@@ -561,6 +647,11 @@ pub async fn score_challenge_result(
           items.push(item);
         }
       }
+    }
+    // Arena missions of the arena's element (granted without showing in this result)
+    if let Some(element) = element {
+      let element_after = element_bests(&transaction, session.user_id).await?.get(element).map(|(score, _)| *score).unwrap_or(0);
+      items.extend(arena_mission_rewards(element, element_before, element_after));
     }
     remote.extend(grant_items(&transaction, session.user_id, &mut wallet, &items).await?);
     after
