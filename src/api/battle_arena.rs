@@ -436,7 +436,9 @@ pub async fn score_challenge_info(state: Arc<AppState>, session: Arc<Session>) -
     veryhardscore: clamp_score(arena.best[2]),
     totalscore: clamp_score(arena.total()),
     rank: if arena.total() > 0 { 1 } else { 0 },
-    in_ranking_period: 1,
+    // With 1 the Arena top said "Calculating Rankings" even with rank 1 (TESTING: 0 may mean
+    // the ranking is not being worked out)
+    in_ranking_period: 0,
     beforeinfo: vec![],
     best_score_info: vec![],
   }))
@@ -576,7 +578,9 @@ pub async fn score_challenge_result(
     totalscore: clamp_score(after.total()),
     previous_bestscore: clamp_score(previous_best),
     bestscore: clamp_score(previous_best.max(if practice { 0 } else { score })),
-    modescore: clamp_score(score),
+    // The Arena panel keeps the higher of its record and this as the mode's best, without
+    // looking at practice: a practice above the record showed as the new best until reloading
+    modescore: clamp_score(if practice { score.min(previous_best) } else { score }),
   }));
   response.remote.extend(remote);
   response.remote.extend(wallet.to_remote_data());
