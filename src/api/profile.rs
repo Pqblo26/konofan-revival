@@ -62,7 +62,9 @@ pub async fn profile(state: Arc<AppState>, session: Arc<Session>) -> impl IntoHa
         (select rank from user_progress where user_progress.user_id = users.id) as rank,
         (select count(*) from user_members where user_members.user_id = users.id) as members,
         (select coalesce(sum(task1::int + task2::int + task3::int), 0) from user_quest_progress
-          where user_quest_progress.user_id = users.id) as crowns
+          where user_quest_progress.user_id = users.id) as crowns,
+        exists(select 1 from user_score_challenge_best
+          where user_score_challenge_best.user_id = users.id and best_score > 0) as in_arena_ranking
       from users
       where id = $1
     "#)
@@ -86,6 +88,13 @@ pub async fn profile(state: Arc<AppState>, session: Arc<Session>) -> impl IntoHa
   let rank: Option<i32> = row.get(5);
   let members: i64 = row.get(6);
   let crowns: i64 = row.get(7);
+  let in_arena_ranking: bool = row.get(8);
+
+  // "Party power": the strongest team, as the team screen adds it up
+  let all_members = crate::member::FetchUserMembers::new(&client).await?.run(session.user_id).await?;
+  let mut parties = crate::member::FetchUserParties::new(&client).await?.run(session.user_id).await?;
+  crate::api::party_info::set_form_strengths(&mut parties, &all_members);
+  let party_power = parties.iter().map(|party| party.power(0) as i64).max().unwrap_or(0);
 
   Ok(Signed(
     Profile {
@@ -100,13 +109,14 @@ pub async fn profile(state: Arc<AppState>, session: Arc<Session>) -> impl IntoHa
         // "Character gallery characters"
         DisplayPlayData::new(4, members, 1),
         // "Party power"
-        DisplayPlayData::new(2, -1, 1),
+        DisplayPlayData::new(2, party_power, 1),
         // "Total crowns earned"
         DisplayPlayData::new(3, crowns, 1),
         // "Latest login", clamped at 1 month at the client
         DisplayPlayData::new(5, last_used.timestamp(), 1),
         // "Arena ranking": -2 - calculating ranking, -1 - unranked, 0 - hide, 1+ - rank
-        DisplayPlayData::new(6, -2, 1),
+        // (this server has one player: first once there is an Arena score)
+        DisplayPlayData::new(6, if in_arena_ranking { 1 } else { -1 }, 1),
         // "Affinity"
         DisplayPlayData::new(7, 1, 1),
       ],

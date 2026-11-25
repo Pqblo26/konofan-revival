@@ -272,19 +272,10 @@ impl Party {
   }
 }
 
-pub async fn party_info(state: Arc<AppState>, session: Arc<Session>) -> impl IntoHandlerResponse {
-  let client = state.get_database_client().await?;
-
-  let mut members = FetchUserMembers::new(&client).await?.run(session.user_id).await?;
-  FetchUserMemberSkillsIn::new(&client)
-    .await?
-    .run(session.user_id, &mut members.iter_mut().collect::<Vec<_>>())
-    .await?;
-
-  let mut parties = FetchUserParties::new(&client).await?.run(session.user_id).await?;
-  // PWR shown in the team screen: main member strength plus its sub members
+/// PWR shown in the team screen: main member strength plus its sub members, for each form.
+pub(crate) fn set_form_strengths(parties: &mut [Party], members: &[crate::member::Member]) {
   let by_id = members.iter().map(|member| (member.id, member)).collect::<HashMap<_, _>>();
-  for party in &mut parties {
+  for party in parties {
     party.fix_special_skills();
     for form in party.party_forms.iter_mut() {
       let Some(main) = by_id.get(&form.main) else {
@@ -300,6 +291,19 @@ pub async fn party_info(state: Arc<AppState>, session: Arc<Session>) -> impl Int
       form.strength = strength;
     }
   }
+}
+
+pub async fn party_info(state: Arc<AppState>, session: Arc<Session>) -> impl IntoHandlerResponse {
+  let client = state.get_database_client().await?;
+
+  let mut members = FetchUserMembers::new(&client).await?.run(session.user_id).await?;
+  FetchUserMemberSkillsIn::new(&client)
+    .await?
+    .run(session.user_id, &mut members.iter_mut().collect::<Vec<_>>())
+    .await?;
+
+  let mut parties = FetchUserParties::new(&client).await?.run(session.user_id).await?;
+  set_form_strengths(&mut parties, &members);
 
   // Weapons and accessories equipped in any team, so the team screen can show them
   let equipped = parties
