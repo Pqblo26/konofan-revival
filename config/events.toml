@@ -1,0 +1,24 @@
+# Eventos activos a la vez (event_id de master/event_config.json).
+#
+# El servidor los deja activos desde ayer hasta dentro de 30 días: sus fechas, su tienda de canje,
+# sus misiones y su banner de portada (este va el primero del carrusel, sin ponerlo en
+# home-banners.toml). En el juego original solían coincidir 2 o 3. Tras cambiarlo, reinicia el
+# servidor.
+#
+# Probado en el juego: 24011. Los demás son candidatos (eventos de historia con jefe, tipo 1, con su
+# tienda de canje), sin probar todavía:
+#   24041  A Service For This Forbidden Weakest Adventurer!
+#   23111  A Guidance to This Princess and The Hero of Cursed Sword!
+#   23101  Friends for This Forbidden Loner!
+#   23091  God's Blessing on This Fantastic Adventurer!
+#   23071  Swimming in This Resort Pool!
+#   23051  Revenue in this Cat Ear Tea House!
+#   23041  School Experience in this Crimson Demon School!
+#   23033  The Finest Dish with this Knight of Princess!
+#   23031  Escape from this Virtual City!
+#   23011  New Year in this Crimson Demon Village!
+# Los de tipo 2 («... Attack!») son de jefe en grupo y los de tipo 1 sin tienda («Elite Bounty
+# Hunt», «Axel's Angel Squad») funcionan distinto: probarlos antes de dejarlos fijos.
+ids = [
+  24011, # Etiquette for This New Year's Party!
+]

@@ -8,8 +8,8 @@
 # (GACHA, EVENT, SHOP, DUNGEON, WEB...) y `destination_option` el ID del destino.
 # Los de GACHA solo funcionan si ese gacha sale en Reclutar (tabla gacha.banners; sin filas
 # activas salen todos los del maestro).
+# El banner de cada evento activo (config/events.toml) se añade solo, el primero.
 ids = [
-  1248, # Evento "Etiquette for This New Year's Party!" (24011, el que el servidor deja activo)
   1076, # Gacha 410535
   1077, # Gacha 410536
   1099, # Gacha 323083
