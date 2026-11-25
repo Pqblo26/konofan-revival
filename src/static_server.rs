@@ -61,10 +61,14 @@ pub async fn start(state: Arc<AppState>) -> io::Result<()> {
       &settings.resources_root.join("bundles/"),
       settings.upstream_url.as_ref().map(|url| url.join("bundles/").unwrap()),
     )
-    .serve_dir_with_fallback(
+    // Some banners only survive in another language (e.g. the 24041 event's, only in KO): a missing
+    // one is looked up in the other languages before the upstream mirror
+    .nest_service(
       "/banners",
-      &settings.resources_root.join("banners/"),
-      settings.upstream_url.as_ref().map(|url| url.join("banners/").unwrap()),
+      ServeDir::new(settings.resources_root.join("banners/")).fallback(OtherLanguageBanner {
+        root: settings.resources_root.join("banners/"),
+        remote: settings.upstream_url.as_ref().map(|url| ServeRemoteResource::new(url.join("banners/").unwrap())),
+      }),
     )
     .serve_dir_with_fallback(
       "/webview",
@@ -84,6 +88,56 @@ pub async fn start(state: Arc<AppState>) -> io::Result<()> {
     settings.public_url
   );
   axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await
+}
+
+/// Serves `/<lang>/<file>` from another language folder when that language does not have it.
+#[derive(Debug, Clone)]
+struct OtherLanguageBanner {
+  root: std::path::PathBuf,
+  remote: Option<ServeRemoteResource>,
+}
+
+const BANNER_LANGUAGES: &[&str] = &["EN", "JP", "KO"];
+
+impl Service<Request> for OtherLanguageBanner {
+  type Response = Response;
+  type Error = Infallible;
+  type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + Sync + 'static>>;
+
+  fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    Poll::Ready(Ok(()))
+  }
+
+  fn call(&mut self, request: Request) -> Self::Future {
+    let path = request.uri().path().trim_start_matches('/').to_owned();
+    let root = self.root.clone();
+    // Lazy: the upstream is only fetched when awaited
+    let remote = self.remote.as_mut().map(|remote| remote.call(request));
+    Box::pin(async move {
+      if let Some((language, file)) = path.split_once('/') {
+        let safe = !file.contains("..") && !file.contains('/') && !file.contains('\\');
+        for other in BANNER_LANGUAGES.iter().filter(|other| **other != language) {
+          let candidate = root.join(other).join(file);
+          if !safe {
+            break;
+          }
+          if let Ok(bytes) = tokio::fs::read(&candidate).await {
+            debug!(%path, language = other, "banner served from another language");
+            let content_type = if file.ends_with(".png") { "image/png" } else { "application/octet-stream" };
+            return Ok(Response::builder()
+              .status(StatusCode::OK)
+              .header("content-type", content_type)
+              .body(Body::from(bytes))
+              .unwrap());
+          }
+        }
+      }
+      match remote {
+        Some(remote) => remote.await,
+        None => Ok(Response::builder().status(StatusCode::NOT_FOUND).body(Body::empty()).unwrap()),
+      }
+    })
+  }
 }
 
 #[derive(Debug, Clone)]
@@ -113,7 +167,13 @@ impl Service<Request> for ServeRemoteResource {
 
     Box::pin(async move {
       let client = Client::new();
-      let response = client.get(remote_url).send().await.unwrap();
+      let response = match client.get(remote_url).send().await {
+        Ok(response) => response,
+        Err(error) => {
+          warn!("failed to fetch remote resource: {}: {}", path, error);
+          return Ok(Response::builder().status(StatusCode::NOT_FOUND).body(Body::empty()).unwrap());
+        }
+      };
 
       let status = StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
       if !status.is_success() {
