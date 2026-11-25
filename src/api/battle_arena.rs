@@ -35,6 +35,9 @@ pub struct ScoreChallengeInfoResponse {
   pub veryhardscore: i32,
   pub totalscore: i32,
   pub rank: i32,
+  /// camelCase in the client (dump.cs): with snake_case it was missing and the Arena top said
+  /// "Calculating Rankings"
+  #[serde(rename = "inRankingPeriod")]
   pub in_ranking_period: i32,
   pub beforeinfo: Vec<ScoreChallengeinfoBeforeInfo>,
   pub best_score_info: Vec<ScoreChallengeMissionBestScoreInfo>,
@@ -232,6 +235,7 @@ pub struct ScoreChallengeResultResponse {
   pub totalrewardids: Vec<i32>,
   pub rank: i32,
   pub ranktype: i32,
+  #[serde(rename = "inRankingPeriod")]
   pub in_ranking_period: i32,
   pub totalscore: i32,
   pub previous_bestscore: i32,
@@ -436,7 +440,6 @@ pub async fn score_challenge_info(state: Arc<AppState>, session: Arc<Session>) -
     veryhardscore: clamp_score(arena.best[2]),
     totalscore: clamp_score(arena.total()),
     rank: if arena.total() > 0 { 1 } else { 0 },
-    // The Arena top says "Calculating Rankings" with 0 or 1 alike (tested): not this field
     in_ranking_period: 1,
     beforeinfo: vec![],
     best_score_info: vec![],

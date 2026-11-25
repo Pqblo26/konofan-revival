@@ -317,6 +317,21 @@ async fn patch_master(name: &str, value: &mut Value) {
         }
       }
     }
+    // Arena EX: open the last season that was held (2011 was never held), now and for 30 days
+    "scorechallenge_ex" => {
+      info!("patching scorechallenge_ex");
+      if let Some(array) = value.as_array_mut() {
+        for item in array {
+          if item.get("id").and_then(|v| v.as_str()) != Some("2010") {
+            continue;
+          }
+          if let Some(item) = item.as_object_mut() {
+            item.insert("start_at".to_owned(), Value::String(start_at_str.clone()));
+            item.insert("end_at".to_owned(), Value::String(end_at_str.clone()));
+          }
+        }
+      }
+    }
     "equip_weapon" => {
       info!("patching equip_weapon");
       if let Some(array) = value.as_array_mut() {
