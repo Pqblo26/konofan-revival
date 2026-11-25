@@ -114,6 +114,14 @@ pub struct SurpriseEvent {
   pub expired_date: i64,
 }
 
+/// When today's plays end: the next midnight in Japan (Unix seconds), when the daily limit
+/// resets. The cards count down to it ("Next"); 0 showed as a negative time.
+fn next_reset() -> i64 {
+  let tokyo = chrono::FixedOffset::east_opt(9 * 3600).unwrap();
+  let tomorrow = chrono::Utc::now().with_timezone(&tokyo).date_naive() + chrono::Days::new(1);
+  tomorrow.and_hms_opt(0, 0, 0).unwrap().and_local_timezone(tokyo).unwrap().timestamp()
+}
+
 /// Events that can still be played today, the stock id being the event id.
 pub async fn surprise_mini_event_select(state: Arc<AppState>, session: Arc<Session>) -> impl IntoHandlerResponse {
   let client = state.get_database_client().await?;
@@ -127,7 +135,7 @@ pub async fn surprise_mini_event_select(state: Arc<AppState>, session: Arc<Sessi
     .map(|event| SurpriseEvent {
       user_stock_id: int(event, "id") as i32,
       surprise_event_id: int(event, "id") as i32,
-      expired_date: 0,
+      expired_date: next_reset(),
     })
     .collect();
   info!(available = select_list.len(), "surprise events");
@@ -160,7 +168,7 @@ pub async fn surprise_mini_event_top(
   let plays = load_plays(&client, session.user_id).await?;
   Ok(Unsigned(SurpriseMiniEventTop {
     best_score: plays.get(&params.surprise_event_id).map_or(0, |&(_, best)| best),
-    expired_date: 0,
+    expired_date: next_reset(),
   }))
 }
 
