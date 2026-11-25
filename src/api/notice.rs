@@ -33,3 +33,11 @@ pub async fn notice() -> impl IntoHandlerResponse {
   //   answer_alarm: "success".to_owned(),
   // })
 }
+
+/// Marks a kind of notification as seen (`notificationset {"type": "6"}` when opening Branch).
+/// Nothing is kept: the badges are worked out from the data each time.
+pub async fn notification_set(request: crate::api::ApiRequest) -> impl IntoHandlerResponse {
+  tracing::info!(body = ?request.body, "notificationset");
+  let response: CallResponse<dyn CallCustom> = CallResponse::new_success(Box::new(serde_json::json!({})));
+  Unsigned(response)
+}

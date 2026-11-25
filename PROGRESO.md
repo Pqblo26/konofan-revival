@@ -113,6 +113,9 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
   - Banners de Reclutar en la base de datos (tabla `gacha.banners`, migración `20261124000002`): sin filas activas salen todos los del maestro (como antes) menos los desactivados; con alguna activa, solo esas, en su `sort_order`, con su tirada diaria (`daily`) y su ventana opcional `start_at`/`end_at`. Se quitó la lista vieja escrita a mano, que no se usaba (#64).
   - Jefe del evento multijugador: cobra sus tickets al empezar (x1, x2…) y al ganar da su botín real, como el individual (oleada del maestro `event_marathon_quest_stage_boss_multi`), además de experiencia y afinidad del equipo. Los compañeros siguen siendo inventados. Antes enseñaba 100 gemas de pago y 5000 gratis que no se daban (#65).
   - «Accept All» de Misiones: el juego sí manda `missiongetall`, con `mission_id_list` (las que ve cobrables). Ahora se cobran solo esas y, en las cadenas (Capítulo 1-2 → 1-3…), todos los pasos de una vez en lugar de uno por pulsación (#65).
+  - «Accept All» cobra cadenas de cualquier largo de una vez (las de capítulos llegan a cientos de pasos; antes se cortaba a los 50) y sin tardar: 1375 misiones en menos de 3 s (#66).
+  - Branch (Others) colgaba el juego con «Connection Error»: pedía `notificationset`, que no existía, y el servidor caía en pánico con cualquier método desconocido. Ahora `notificationset` responde bien, y un método sin manejador devuelve un éxito vacío y lo apunta en el log (#66).
+  - Room Invitation ya no enseña una sala inventada de «Megumin» (entrar habría cobrado tickets de jefe por un combate que no existe) (#66).
   - La misión de novato «Raise 1 character's Affinity to Lv. 3» (`member_friendlv`) ya cuenta la afinidad de los personajes (#65).
   - Herrería: «Crafting Complete» sin fabricar nada. El login sumaba cantidades fijas de las capturas originales (materiales 1100 ×3, 5001 ×4, 151 ×1, ticket 17 ×2 y tickets de jefe 230831 ×3), así que el juego creía tener más de lo que hay en la base de datos. Quitadas (#65).
   - Los retos de mazmorra (`DungeonChallenge`) se dejan sin gastar a propósito: la respuesta de empezar zona no lleva contador y no sabemos cómo los descuenta el cliente; con intentos ilimitados se juega igual.
@@ -125,7 +128,7 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
 - Fame Potions: se pueden comprar, pero `use_supplement_num` al empezar una Fame Quest todavía no las gasta.
 - Battle Arena EX: sin implementar («Not available»). Los retos de mazmorra (`DungeonChallenge`) se compran pero no se gastan (intentos ilimitados).
 - Endpoints todavía en stub (~100 avisos `encountered stub` en el código): sorteo de eventos, compras que fallan por el cliente, vincular cuenta, etc.
-- Room Invitation y Transfer ID en stub. Party Power sale N/A en el perfil.
+- Transfer ID en stub. Room Invitation sale vacía (no hay más jugadores). Party Power sale N/A en el perfil.
 - Herramientas propias: **panel web** (Pablo lo quiere) para ver jugadores, tiradas y registros, y editar banners, probabilidades, eventos y personajes.
 
 ## Fallos encontrados jugando (2026-11-12)

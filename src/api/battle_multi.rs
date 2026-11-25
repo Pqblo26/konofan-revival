@@ -31,19 +31,15 @@ pub struct MultiBattleInvitationListResponse {
 
 impl CallCustom for MultiBattleInvitationListResponse {}
 
-// TODO: BROKEN - Client starts lagging, displays stub (?) text, and does not respond to selection
 pub async fn multi_battle_invitation_list() -> impl IntoHandlerResponse {
   warn!("encountered stub: multi_battle_invitation_list");
 
+  // This server has one player: nobody can invite you. A made-up room here would take boss
+  // tickets for a battle that does not exist.
   Ok(Unsigned(MultiBattleInvitationListResponse {
     multi_battle_invitation: MultiBattleInvitation {
       event_id: 24011,
-      rooms: vec![MultiBattleRoom {
-        room_no: 1,
-        quest_id: 513891,
-        user_icon: 1083110,
-        user_name: "Megumin".to_string(),
-      }],
+      rooms: vec![],
     },
   }))
 }

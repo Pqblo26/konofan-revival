@@ -115,6 +115,7 @@ async fn api_call(
     .handle("masterall", master_all::master_all)
     .handle("tutorial", tutorial::tutorial)
     .handle("notice", notice::notice)
+    .handle("notificationset", notice::notification_set)
     .handle("gachainfo", gacha::gacha_info)
     .handle("gacha_tutorial", gacha::gacha_tutorial)
     .handle("gacha_tutorial_reward", gacha::gacha_tutorial_reward)
