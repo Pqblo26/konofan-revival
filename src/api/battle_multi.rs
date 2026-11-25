@@ -38,7 +38,7 @@ pub async fn multi_battle_invitation_list() -> impl IntoHandlerResponse {
   // tickets for a battle that does not exist.
   Ok(Unsigned(MultiBattleInvitationListResponse {
     multi_battle_invitation: MultiBattleInvitation {
-      event_id: 24011,
+      event_id: crate::api::master_all::main_event_id(),
       rooms: vec![],
     },
   }))

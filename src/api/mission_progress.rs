@@ -238,12 +238,12 @@ pub fn mission_row(mission_id: i32) -> Option<&'static Value> {
     .find(|mission| int(mission, "mission_id") == mission_id)
 }
 
-/// Missions of the running event.
+/// Missions of the running events.
 pub fn active_event_missions() -> Vec<&'static Value> {
   get_master_manager()
     .get_master("event_mission")
     .iter()
-    .filter(|mission| mission["event_id"].as_str() == Some(crate::api::master_all::ACTIVE_EVENT_ID))
+    .filter(|mission| mission["event_id"].as_str().is_some_and(crate::api::master_all::is_active_event))
     .collect()
 }
 

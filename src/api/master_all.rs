@@ -140,9 +140,40 @@ async fn load_masters() -> HashMap<String, MasterAllItem> {
   masters
 }
 
-/// The event shown as running ("Etiquette for This New Year's Party!"): its dates, exchange and
-/// missions are moved to now.
-pub const ACTIVE_EVENT_ID: &str = "24011";
+/// The events shown as running: their dates, exchange, missions and home banner are moved to now.
+/// Chosen in config/events.toml; "Etiquette for This New Year's Party!" (24011) when missing.
+pub fn active_event_ids() -> &'static [String] {
+  static IDS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+  IDS.get_or_init(|| {
+    #[derive(Deserialize)]
+    struct Events {
+      ids: Vec<i64>,
+    }
+    let result = config::Config::builder()
+      .add_source(config::File::with_name("config/events").required(false))
+      .build()
+      .and_then(|config| config.try_deserialize::<Events>());
+    let ids = match result {
+      Ok(events) if !events.ids.is_empty() => events.ids,
+      Ok(_) => vec![24011],
+      Err(error) => {
+        warn!("failed to load config/events.toml, using event 24011: {}", error);
+        vec![24011]
+      }
+    };
+    info!(?ids, "active events");
+    ids.into_iter().map(|id| id.to_string()).collect()
+  })
+}
+
+pub fn is_active_event(event_id: &str) -> bool {
+  active_event_ids().iter().any(|id| id == event_id)
+}
+
+/// The first active event, for screens that show a single one.
+pub fn main_event_id() -> i32 {
+  active_event_ids().first().and_then(|id| id.parse().ok()).unwrap_or(24011)
+}
 
 async fn patch_master(name: &str, value: &mut Value) {
   let now = chrono::Utc::now();
@@ -205,7 +236,7 @@ async fn patch_master(name: &str, value: &mut Value) {
       info!("patching exchange");
       if let Some(array) = value.as_array_mut() {
         for item in array.iter_mut().filter_map(|item| item.as_object_mut()) {
-          if item.get("exchange_id").and_then(|id| id.as_str()) == Some(ACTIVE_EVENT_ID) {
+          if item.get("exchange_id").and_then(|id| id.as_str()).is_some_and(is_active_event) {
             item.insert("start_at".to_owned(), Value::String(start_at_str.clone()));
             item.insert("end_at".to_owned(), Value::String(end_at_str.clone()));
           }
@@ -235,8 +266,7 @@ async fn patch_master(name: &str, value: &mut Value) {
       if let Some(array) = value.as_array_mut() {
         for item in array {
           if let Some(item) = item.as_object_mut() {
-            // "Etiquette for This New Year's Party!"
-            if item.get("event_id").unwrap() != ACTIVE_EVENT_ID {
+            if !item.get("event_id").and_then(|id| id.as_str()).is_some_and(is_active_event) {
               continue;
             }
 
@@ -268,8 +298,18 @@ async fn patch_master(name: &str, value: &mut Value) {
           let Some(id) = item.get("id").and_then(|id| id.as_str()).and_then(|id| id.parse::<i64>().ok()) else {
             continue;
           };
-          let Some(position) = home_banners.iter().position(|&banner_id| banner_id == id) else {
-            continue;
+          // The banner of each active event goes first, then the config list
+          let event_banner = item.get("destination_type").and_then(|v| v.as_str()) == Some("EVENT")
+            && item.get("graphic").and_then(|v| v.as_str()).is_some_and(|g| g.starts_with("banner_event_"))
+            && item.get("destination_option").and_then(|v| v.as_str()).is_some_and(is_active_event);
+          let position = if event_banner {
+            let event = item.get("destination_option").and_then(|v| v.as_str()).unwrap_or("");
+            active_event_ids().iter().position(|id| id == event).unwrap_or(0)
+          } else {
+            match home_banners.iter().position(|&banner_id| banner_id == id) {
+              Some(position) => active_event_ids().len() + position,
+              None => continue,
+            }
           };
 
           item.insert("start_at".to_owned(), Value::String(start_at_str.clone()));
