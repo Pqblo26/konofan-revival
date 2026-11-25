@@ -290,7 +290,6 @@ pub async fn score_challenge_mission(state: Arc<AppState>, session: Arc<Session>
   let client = state.get_database_client().await?;
   let bests = element_bests(&client, session.user_id).await?;
   let mut best_score_info = Vec::new();
-  let mut display_best_score_info = Vec::new();
   for element in MISSION_ELEMENTS {
     let (score, arena) = bests.get(*element).copied().unwrap_or((0, 0));
     best_score_info.push(ScoreChallengeMissionBestScoreInfo {
@@ -299,13 +298,9 @@ pub async fn score_challenge_mission(state: Arc<AppState>, session: Arc<Session>
       best_score: clamp_score(score),
       reward_type: 0,
     });
-    display_best_score_info.push(ScoreChallengeMissionDisplayBestScoreInfo {
-      elemental: element.to_string(),
-      best_score: clamp_score(score),
-      previous_best_score: clamp_score(score),
-    });
   }
-  Ok(Unsigned(ScoreChallengeMissionResponse { best_score_info, display_best_score_info }))
+  // Each entry here pops up "Arena Best Score Updated": the bests are already shown at the result
+  Ok(Unsigned(ScoreChallengeMissionResponse { best_score_info, display_best_score_info: vec![] }))
 }
 
 // See [Wonder_Api_ScorechallengeMissionListResponseDto_Fields]
