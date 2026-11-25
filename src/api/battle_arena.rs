@@ -436,9 +436,8 @@ pub async fn score_challenge_info(state: Arc<AppState>, session: Arc<Session>) -
     veryhardscore: clamp_score(arena.best[2]),
     totalscore: clamp_score(arena.total()),
     rank: if arena.total() > 0 { 1 } else { 0 },
-    // With 1 the Arena top said "Calculating Rankings" even with rank 1 (TESTING: 0 may mean
-    // the ranking is not being worked out)
-    in_ranking_period: 0,
+    // The Arena top says "Calculating Rankings" with 0 or 1 alike (tested): not this field
+    in_ranking_period: 1,
     beforeinfo: vec![],
     best_score_info: vec![],
   }))
