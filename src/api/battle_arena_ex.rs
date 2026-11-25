@@ -10,7 +10,9 @@ use crate::api::battle::{BattleMember, BattleParty};
 use crate::api::exchange::{get_pack, pack_contents};
 use crate::api::master_all::get_master_manager;
 use crate::api::quest::progress::{load_progress, parse_master_date, record_quest};
-use crate::api::ApiRequest;
+use crate::api::{ApiRequest, RemoteDataItemType};
+use crate::blob::IntoRemoteData;
+use crate::item::UpdateItemCountBy;
 use crate::call::{CallCustom, CallResponse};
 use crate::database::QueryExecutor;
 use crate::handler::{IntoHandlerResponse, Unsigned};
@@ -188,7 +190,6 @@ fn to_items(rewards: &[ExReward]) -> Vec<(i32, i64, i32)> {
 
 // Client constants of Arena EX (enum in dump.cs, TypeDefIndex 10058)
 const DEFENSE_BONUS_BIAS: f64 = 125000.0;
-const MAX_HP_SUM: f64 = 8900.0;
 const MIN_TOTAL_RECEIVED_DAMAGE: f64 = 1000.0;
 /// The battle clock starts at 1:00; `battletime` is the game seconds that went by
 const BATTLE_SECONDS: f64 = 60.0;
@@ -198,7 +199,8 @@ const BATTLE_SECONDS: f64 = 60.0;
 /// survival tables were never published, so this follows the in-game help with our own numbers:
 /// - base: damage dealt x stage difficulty x time bonus (1 to 2, longer battles score more)
 /// - bonus by the stage's type: Defense gives more the less damage was taken (with the client's
-///   constants) x survival bonus (+0.1 per survivor); Physical/Magic give that damage x difficulty
+///   constants: 125000 x 1000 / damage taken, x difficulty x time bonus) x survival bonus (+0.1 per
+///   survivor); Physical/Magic give that damage x difficulty
 /// - total: (base + bonus) x low rarity bonus (only stages with `rarity_bonus_id`)
 struct ExScore {
   basic: i64,
@@ -240,8 +242,10 @@ impl ExScore {
     } else {
       match bonus_type {
         1 => {
+          // Up to the bias when taking at most the minimum damage, scaled like the base by the
+          // stage difficulty and how long the party held on
           let taken = value(&["total_received_damage"]).max(MIN_TOTAL_RECEIVED_DAMAGE);
-          (DEFENSE_BONUS_BIAS * MAX_HP_SUM / taken * survival_coefficient).round()
+          (DEFENSE_BONUS_BIAS * MIN_TOTAL_RECEIVED_DAMAGE / taken * difficulty * time_coefficient * survival_coefficient).round()
         }
         2 => (value(&["physical_hit_damage"]) * difficulty * survival_coefficient).round(),
         3 => (value(&["magical_hit_damage"]) * difficulty * survival_coefficient).round(),
@@ -472,23 +476,32 @@ pub async fn score_challenge_ex_skip(
   let (season, score_type) = current_season().context("no arena ex season open")?;
   let stages = season_stages(season);
   // Two integers, names unknown: the stage and how many attempts to skip
+  // The game sends {"skip_count": "1", "scorechallenge_ex_id": "2010"}: one stage per season
+  if let Some(asked) = param(body, &["scorechallenge_ex_id"]) {
+    if asked != season as i64 {
+      warn!(asked, season, "arena ex skip for another season, using the open one");
+    }
+  }
   let quest_id = param(body, &["quest_id", "stage_id"])
     .map(|v| v as i32)
-    .or_else(|| body.values().filter_map(|v| v.parse::<i32>().ok()).find(|v| stages.contains(v)))
     .or_else(|| stages.first().copied())
     .context("arena ex season without stages")?;
-  let wanted = param(body, &["skip_num", "num", "count", "skip_count", "challenge_num", "challengenum"])
-    .map(|v| v as i32)
-    .or_else(|| body.values().filter_map(|v| v.parse::<i32>().ok()).find(|v| (1..=DAILY_ATTEMPTS).contains(v)))
-    .unwrap_or(1);
+  let wanted = param(body, &["skip_count", "skip_num"]).map(|v| v as i32).unwrap_or(1);
 
   let mut client = state.get_database_client().await?;
   let transaction = client.transaction().await.context("failed to start transaction")?;
   let before = load_season(&transaction, session.user_id, season).await?;
   let best = before.best_of(quest_id);
-  let skips = if best > 0 { wanted.clamp(0, before.attempts_left()) } else { 0 };
+  // One Skip Ticket per skipped attempt (the game shows 978 -> 977 for one)
+  #[rustfmt::skip]
+  let tickets: i32 = transaction.query_opt(/* language=postgresql */ r#"
+    select quantity from user_items where user_id = $1 and item_type = $2 and item_id = 1
+  "#, &[&session.user_id, &(i32::from(RemoteDataItemType::SkipTicket) as i64)]).await?
+    .map(|row| row.get(0))
+    .unwrap_or(0);
+  let skips = if best > 0 { wanted.clamp(0, before.attempts_left()).min(tickets.max(0)) } else { 0 };
   if skips != wanted {
-    warn!(wanted, skips, best, "arena ex skip limited by attempts left or missing best score");
+    warn!(wanted, skips, best, tickets, "arena ex skip limited by attempts, best score or Skip Tickets");
   }
 
   let mut reward_list = Vec::new();
@@ -507,6 +520,8 @@ pub async fn score_challenge_ex_skip(
   let mut remote = Vec::new();
   if skips > 0 {
     record_quest(&transaction, session.user_id, quest_id, skips, [false; 3]).await?;
+    let update = UpdateItemCountBy::new(&transaction).await?;
+    remote.extend(update.run(session.user_id, (RemoteDataItemType::SkipTicket, 1), -skips).await?.into_remote_data());
     #[rustfmt::skip]
     transaction.execute(/* language=postgresql */ r#"
       insert into user_score_challenge_best (user_id, quest_id, best_score) values ($1, $2, $3)
