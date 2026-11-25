@@ -118,6 +118,7 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
   - Room Invitation ya no enseña una sala inventada de «Megumin» (entrar habría cobrado tickets de jefe por un combate que no existe) (#66).
   - «Clear all of the Daily Missions» salía cobrable (1/1) con 3 de 7 diarias hechas: el juego la da por hecha con cualquier valor, como la de novato. Ahora vale 1 solo con las 7 cobradas hoy (#67).
   - Branch: las tarjetas decían «Next -17m» (menos los minutos de la hora actual): cada tarjeta llevaba `expired_date: 0`. Ahora llevan la próxima medianoche de Japón, cuando se reinician las jugadas (#68; el intento de #67 con el maestro no era la causa y se deshizo).
+  - Perfil: «Party Power» ya no sale N/A: es el poder del equipo más fuerte, sumado como en la pantalla de equipo. «Arena ranking» sale 1.º en cuanto hay una puntuación de Arena (antes se quedaba «calculando»). `party_strength` calcula el poder de verdad (antes 1000 fijo) (#69).
   - La misión de novato «Raise 1 character's Affinity to Lv. 3» (`member_friendlv`) ya cuenta la afinidad de los personajes (#65).
   - Herrería: «Crafting Complete» sin fabricar nada. El login sumaba cantidades fijas de las capturas originales (materiales 1100 ×3, 5001 ×4, 151 ×1, ticket 17 ×2 y tickets de jefe 230831 ×3), así que el juego creía tener más de lo que hay en la base de datos. Quitadas (#65).
   - Los retos de mazmorra (`DungeonChallenge`) se dejan sin gastar a propósito: la respuesta de empezar zona no lleva contador y no sabemos cómo los descuenta el cliente; con intentos ilimitados se juega igual.
@@ -130,7 +131,7 @@ Fase 3–4 (redirigir el cliente y servidor mínimo). El 2026-11-12 quedó monta
 - Fame Potions: se pueden comprar, pero `use_supplement_num` al empezar una Fame Quest todavía no las gasta.
 - Battle Arena EX: sin implementar («Not available»). Los retos de mazmorra (`DungeonChallenge`) se compran pero no se gastan (intentos ilimitados).
 - Endpoints todavía en stub (~100 avisos `encountered stub` en el código): sorteo de eventos, compras que fallan por el cliente, vincular cuenta, etc.
-- Transfer ID en stub. Room Invitation sale vacía (no hay más jugadores). Party Power sale N/A en el perfil.
+- Transfer ID en stub. Room Invitation sale vacía (no hay más jugadores). 
 - Herramientas propias: **panel web** (Pablo lo quiere) para ver jugadores, tiradas y registros, y editar banners, probabilidades, eventos y personajes.
 
 ## Fallos encontrados jugando (2026-11-12)

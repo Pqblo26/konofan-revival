@@ -919,12 +919,34 @@ impl CallCustom for PartyStrengthResponseDto {}
 // party_no=1
 // form_info=[{"form_no":1,"main":11,"sub1":0,"sub2":0,"weapon":0,"acc":0,"special_skill":{"special_skill_id":100001,"trial":false},"skill_pa_fame":0},{"form_no":2,"main":12,"sub1":0,"sub2":0,"weapon":0,"acc":0,"special_skill":{"special_skill_id":101001,"trial":false},"skill_pa_fame":0},{"form_no":3,"main":13,"sub1":0,"sub2":0,"weapon":0,"acc":0,"special_skill":{"special_skill_id":102001,"trial":false},"skill_pa_fame":0},{"form_no":4,"main":0,"sub1":0,"sub2":0,"weapon":0,"acc":0,"special_skill":{"special_skill_id":0,"trial":false},"skill_pa_fame":0},{"form_no":5,"main":0,"sub1":0,"sub2":0,"weapon":0,"acc":0,"special_skill":{"special_skill_id":0,"trial":false},"skill_pa_fame":0}]
 // is_allow_trial=1
-pub async fn party_strength(request: ApiRequest) -> impl IntoHandlerResponse {
-  let party_no: i32 = request.body["party_no"].parse().unwrap();
+#[derive(Debug, Deserialize)]
+pub struct PartyStrengthRequest {
+  pub form_info: Vec<PartyFormInfoRequestDto>,
+}
 
-  warn!(?party_no, "encountered stub: party_strength");
-
-  Ok(Unsigned(PartyStrengthResponseDto { strength: 1000 }))
+/// Power of a team being edited: main member strength plus its sub members, as in party_info.
+pub async fn party_strength(
+  state: Arc<AppState>,
+  session: Arc<Session>,
+  Params(params): Params<PartyStrengthRequest>,
+) -> impl IntoHandlerResponse {
+  let client = state.get_database_client().await?;
+  let members = FetchUserMembers::new(&client).await?.run(session.user_id).await?;
+  let by_id = members.iter().map(|member| (member.id as i64, member)).collect::<HashMap<_, _>>();
+  let strength: i32 = params
+    .form_info
+    .iter()
+    .filter_map(|form| {
+      let main = by_id.get(&form.main)?;
+      let subs: i32 = [form.sub1, form.sub2]
+        .iter()
+        .filter_map(|id| by_id.get(id))
+        .map(|sub| sub.sub_strength_value(sub.prototype.character_id == main.prototype.character_id))
+        .sum();
+      Some(main.main_strength_value() + subs)
+    })
+    .sum();
+  Ok(Unsigned(PartyStrengthResponseDto { strength }))
 }
 
 // See [Wonder_Api_LimitbreakResponseDto_Fields]
