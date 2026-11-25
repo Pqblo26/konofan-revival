@@ -602,7 +602,7 @@ pub async fn mission_get_all(
   // The game sends the missions it shows as receivable, from every tab
   let requested = body
     .get("mission_id_list")
-    .and_then(|list| serde_json::from_str::<Vec<i32>>(list).ok());
+    .and_then(|list| serde_json::from_str::<std::collections::HashSet<i32>>(list).ok());
 
   let mut client = state.get_database_client().await?;
   let mut progress = MissionState::load(&client, session.user_id).await?;
@@ -614,29 +614,37 @@ pub async fn mission_get_all(
     _ => MissionKind::Normal as i32,
   };
   // Receiving a mission can unlock the next one of its chain (enabled_id) or complete an "all"
-  // mission: repeat until nothing new is ready, like pressing the button again
+  // mission: repeat until nothing new is ready, like pressing the button again. Chains can have
+  // hundreds of steps, so after the first pass only the next steps and "all" missions are checked.
+  let wanted = |mission: &&Value| {
+    kind.is_none_or(|kind| kind_of(mission) == kind)
+      && requested
+        .as_ref()
+        .is_none_or(|requested| requested.contains(&mission_progress::int(mission, "mission_id")))
+  };
+  let is_all = |mission: &Value| mission["rule"].as_str().is_some_and(|rule| rule.starts_with("all_"));
+  let pool = missions.iter().filter(wanted).collect::<Vec<_>>();
+  let mut next_steps: std::collections::HashMap<i32, Vec<&Value>> = std::collections::HashMap::new();
+  for mission in &pool {
+    next_steps.entry(mission_progress::int(mission, "enabled_id")).or_default().push(mission);
+  }
+  let all_missions = pool.iter().copied().filter(|mission| is_all(mission)).collect::<Vec<_>>();
   let mut items = Vec::new();
   let mut ids = Vec::new();
-  for _ in 0..50 {
-    let ready = missions
-      .iter()
-      .filter(|mission| kind.is_none_or(|kind| kind_of(mission) == kind))
-      .filter(|mission| {
-        requested
-          .as_ref()
-          .is_none_or(|requested| requested.contains(&mission_progress::int(mission, "mission_id")))
-      })
+  let mut candidates = pool.clone();
+  while !candidates.is_empty() {
+    let ready = candidates
+      .into_iter()
       .filter(|mission| !progress.is_received(mission) && progress.is_unlocked(mission))
       .filter(|mission| {
         mission_progress::target(mission).is_some_and(|target| progress.progress(mission) >= target)
       })
       .collect::<Vec<_>>();
-    if ready.is_empty() {
-      break;
-    }
+    let mut received_now = std::collections::HashSet::new();
     for mission in ready {
       let mission_id = mission_progress::int(mission, "mission_id");
       progress.mark_received(mission_id);
+      received_now.insert(mission_id);
       ids.push(mission_id);
       let pack_id = mission["pack_id"].as_str().unwrap_or("0");
       items.extend(
@@ -645,6 +653,14 @@ pub async fn mission_get_all(
           .unwrap_or_default(),
       );
     }
+    if received_now.is_empty() {
+      break;
+    }
+    candidates = received_now
+      .iter()
+      .flat_map(|id| next_steps.get(id).into_iter().flatten().copied())
+      .chain(all_missions.iter().copied())
+      .collect();
   }
 
   let transaction = client.transaction().await.context("failed to start transaction")?;

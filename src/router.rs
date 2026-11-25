@@ -1,4 +1,5 @@
-use crate::handler::{Handler, HandlerContext, IntoHandlerResponse};
+use crate::call::{CallCustom, CallResponse};
+use crate::handler::{Handler, HandlerContext, IntoHandlerResponse, Unsigned};
 use crate::impl_handler::IntoHandler;
 use std::collections::HashMap;
 use tracing::error;
@@ -26,11 +27,13 @@ impl Router {
   }
 
   pub async fn dispatch(&self, name: &str, ctx: HandlerContext) -> Box<dyn IntoHandlerResponse> {
-    let handler = self
-      .handlers
-      .get(name)
-      .ok_or_else(|| anyhow::anyhow!("Handler not found: {}", name))
-      .expect("Handler not found");
+    let Some(handler) = self.handlers.get(name) else {
+      // An empty success: a panic here drops the connection and the game retries until it
+      // shows "Connection Error"
+      error!(name, "no handler for this method, answering with an empty success");
+      let response: CallResponse<dyn CallCustom> = CallResponse::new_success(Box::new(serde_json::json!({})));
+      return Box::new(Unsigned(response));
+    };
 
     handler.call(ctx).await
   }
