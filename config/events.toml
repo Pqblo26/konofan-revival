@@ -5,21 +5,15 @@
 # home-banners.toml). En el juego original solían coincidir 2 o 3. Tras cambiarlo, reinicia el
 # servidor.
 #
-# Probado en el juego: 24011 y 24041 (este último sin imágenes en los recursos descargados: su banner
-# y el de su canje salen en blanco). Los demás son candidatos (eventos de historia con jefe, tipo 1,
-# con su tienda de canje), todos con sus dos imágenes salvo 23033, al que le falta la del canje:
-#   23111  A Guidance to This Princess and The Hero of Cursed Sword!
-#   23101  Friends for This Forbidden Loner!
-#   23091  God's Blessing on This Fantastic Adventurer!
-#   23071  Swimming in This Resort Pool!
-#   23051  Revenue in this Cat Ear Tea House!
-#   23041  School Experience in this Crimson Demon School!
-#   23033  The Finest Dish with this Knight of Princess!
-#   23031  Escape from this Virtual City!
-#   23011  New Year in this Crimson Demon Village!
-# Los de tipo 2 («... Attack!») son de jefe en grupo y los de tipo 1 sin tienda («Elite Bounty
-# Hunt», «Axel's Angel Squad») funcionan distinto: probarlos antes de dejarlos fijos.
+# Solo 5 eventos conservan su pantalla en el cliente (BackgroundEventTop<id> en el catálogo de
+# recursos); con cualquier otro, al abrirlo sale «Data Load Failed» (probado con 23111):
+#   24011  Etiquette for This New Year's Party!        (historia con jefe y canje; probado)
+#   24041  A Service For This Forbidden Weakest Adventurer! (probado; sin banner ni cartel de canje
+#          en los recursos descargados, salen en blanco)
+#   24013  Elite Bounty Hunt! ~Giant Bat~               (tipo 1 sin canje; sin probar)
+#   24012  Troll Attack ~Risky Business~                (tipo 2, jefe en grupo; sin probar)
+#   23121  Christmas on This Street of Royal Capital!  (tipo 2, jefe en grupo; sin probar)
 ids = [
   24011, # Etiquette for This New Year's Party!
-  23111, # A Guidance to This Princess and The Hero of Cursed Sword!
+  24041, # A Service For This Forbidden Weakest Adventurer!
 ]
