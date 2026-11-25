@@ -221,20 +221,8 @@ async fn patch_master(name: &str, value: &mut Value) {
       if let Some(array) = value.as_array_mut() {
         if let Some(mut last) = array.last().cloned() {
           if let Some(item) = last.as_object_mut() {
-            // The cards' "Next" counts down to one day after the period start: start it at the
-            // last daily reset (midnight in Japan, when plays reset), not at server start - 1 day,
-            // which made it negative minutes after starting the server
-            let tokyo = chrono::FixedOffset::east_opt(9 * 3600).unwrap();
-            let reset = now
-              .with_timezone(&tokyo)
-              .date_naive()
-              .and_hms_opt(0, 0, 0)
-              .unwrap()
-              .and_local_timezone(tokyo)
-              .unwrap()
-              .with_timezone(&chrono::Utc);
             item.insert("limit".to_owned(), Value::String(events.to_string()));
-            item.insert("start_at".to_owned(), Value::String(reset.format("%Y/%m/%d %H:%M:%S").to_string()));
+            item.insert("start_at".to_owned(), Value::String(start_at.format("%Y/%m/%d %H:%M:%S").to_string()));
             item.insert("end_at".to_owned(), Value::String(end_at.format("%Y/%m/%d %H:%M:%S").to_string()));
           }
           array.push(last);
