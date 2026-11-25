@@ -194,7 +194,9 @@ impl MissionState {
       "gacha_count" => self.counter("gacha").total,
       "player_login" => self.counter("login").days,
       "time" => 1,
-      "all_daily" => self.received_of_type("DAILY", "all_daily"),
+      // Like all_beginner, the client shows it as done (1/1) with any value: 1 only once the
+      // others of the day (rule_x of them) are received
+      "all_daily" => (self.received_of_type("DAILY", "all_daily") >= x) as i32,
       // The client shows it as done (1/1) with any value: 1 only once every other one is received
       "all_beginner" => {
         let others = get_master_manager()
@@ -291,7 +293,7 @@ pub fn target(mission: &Value) -> Option<i32> {
           .count() as i32,
       )
     }
-    "all_beginner" => Some(1),
+    "all_beginner" | "all_daily" => Some(1),
     "event_battle_normal" | "event_battle_hard" | "event_battle_normal_perfect" | "event_battle_hard_perfect" => Some(1),
     "time" => Some(1),
     _ => Some(int(mission, "rule_x")).filter(|x| *x > 0),
