@@ -212,11 +212,20 @@ pub async fn fame_quest_start(
   let stage_id: i32 = request.body["stage_id"].parse().unwrap();
   let cost_ratio: i32 = request.body["cost_ratio"].parse().unwrap();
 
-  if use_supplement_num > 0 {
-    // TODO: Fame Potions (supplements) are not taken yet
-    warn!(?use_supplement_num, "fame quest started with supplements");
-  }
-  battle::make_battle_start(&state, &session, party_no, Some((stage_id, cost_ratio))).await
+  // Fame Supplements are taken here; failing to take them must not stop the battle
+  let supplements_remote = match state.get_database_client().await {
+    Ok(client) => crate::api::fame::start_fame_quest(&client, session.user_id, use_supplement_num, cost_ratio)
+      .await
+      .unwrap_or_else(|error| {
+        warn!(?error, "failed to take fame supplements");
+        Vec::new()
+      }),
+    Err(error) => {
+      warn!(?error, "no database connection for fame supplements");
+      Vec::new()
+    }
+  };
+  battle::make_battle_start_with(&state, &session, party_no, Some((stage_id, cost_ratio)), true, supplements_remote).await
 }
 
 // See [Wonder_Api_FameQuestResultResponseDto_Fields]
@@ -298,6 +307,15 @@ pub async fn fame_quest_result(
 
   let (member_exp, love) =
     make_battle_member_exp_and_character_love(&party, &client, &session, stage.intimacy_exp).await?;
+  // Front members: the main member of each form
+  let front_members: Vec<i64> = party
+    .party_forms
+    .iter()
+    .map(|form| form.main as i64)
+    .filter(|id| *id > 0)
+    .collect();
+  let lottery_potion_list =
+    crate::api::fame::draw_potions(&client, session.user_id, params.stage_id, &front_members, params.win != 0).await;
   let mut response = CallResponse::new_success(Box::new(FameQuestResultResponse {
     fame_rank_up: 1,
     exp: stage.player_exp,
@@ -316,7 +334,7 @@ pub async fn fame_quest_result(
       })
       .collect(),
     mission_reward: vec![],
-    lottery_potion_list: vec![],
+    lottery_potion_list,
   }));
   response.remote.extend(update_items);
   response.remote.extend(wallet_remote);

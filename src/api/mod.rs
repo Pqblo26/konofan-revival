@@ -20,6 +20,7 @@ pub mod character_enhance;
 pub mod piece_board;
 pub mod dungeon;
 pub mod exchange;
+pub mod fame;
 pub mod expedition;
 pub mod friend;
 pub mod gacha;

@@ -497,7 +497,9 @@ impl<'a> FetchUserMembers<'a> {
 
   pub async fn run(&self, user_id: UserId) -> anyhow::Result<Vec<Member>> {
     let rows = self.executor.client().query(&self.statement, &[&user_id]).await?;
-    Ok(rows.into_iter().map(materialize_member_row).collect::<Vec<_>>())
+    let mut members = rows.into_iter().map(materialize_member_row).collect::<Vec<_>>();
+    crate::api::fame::fill_member_fame(self.executor.client(), user_id, &mut members).await;
+    Ok(members)
   }
 }
 
@@ -522,7 +524,9 @@ impl<'a> FetchUserMembersIn<'a> {
 
   pub async fn run(&self, user_id: UserId, ids: &[i64]) -> anyhow::Result<Vec<Member>> {
     let rows = self.executor.client().query(&self.statement, &[&user_id, &ids]).await?;
-    Ok(rows.into_iter().map(materialize_member_row).collect::<Vec<_>>())
+    let mut members = rows.into_iter().map(materialize_member_row).collect::<Vec<_>>();
+    crate::api::fame::fill_member_fame(self.executor.client(), user_id, &mut members).await;
+    Ok(members)
   }
 }
 
@@ -591,7 +595,9 @@ impl<'a> FetchUserParties<'a> {
 
   pub async fn run(&self, user_id: UserId) -> anyhow::Result<Vec<Party>> {
     let rows = self.executor.client().query(&self.statement, &[&user_id]).await?;
-    Ok(materialize_party_rows(rows))
+    let mut parties = materialize_party_rows(rows);
+    fill_party_traits(self.executor.client(), user_id, &mut parties).await;
+    Ok(parties)
   }
 }
 
@@ -634,7 +640,24 @@ impl<'a> FetchUserParty<'a> {
       .client()
       .query(&self.statement, &[&user_id, &party_id])
       .await?;
-    Ok(materialize_party_rows(rows).into_iter().next().unwrap())
+    let mut parties = materialize_party_rows(rows);
+    fill_party_traits(self.executor.client(), user_id, &mut parties).await;
+    Ok(parties.into_iter().next().unwrap())
+  }
+}
+
+/// The Fame Trait each form has set.
+async fn fill_party_traits(client: &tokio_postgres::Client, user_id: UserId, parties: &mut [Party]) {
+  let traits = crate::api::fame::party_traits(client, user_id).await;
+  if traits.is_empty() {
+    return;
+  }
+  for party in parties.iter_mut() {
+    for form in party.party_forms.iter_mut() {
+      if let Some(id) = traits.get(&(form.party_no as i64, form.form_no as i64)) {
+        form.skill_pa_fame = *id;
+      }
+    }
   }
 }
 
