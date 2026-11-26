@@ -150,6 +150,18 @@ pub async fn make_battle_start(
   party_id: i32,
   stamina: Option<(i32, i32)>,
 ) -> impl IntoHandlerResponse + use<> {
+  make_battle_start_with(state, session, party_id, stamina, false, Vec::new()).await
+}
+
+/// [fame_quest]: adds the members' fame ranks to their stats. [extra_remote] goes with the response.
+pub async fn make_battle_start_with(
+  state: &AppState,
+  session: &Session,
+  party_id: i32,
+  stamina: Option<(i32, i32)>,
+  fame_quest: bool,
+  extra_remote: Vec<RemoteData>,
+) -> impl IntoHandlerResponse + use<> {
   let client = state
     .get_database_client()
     .await
@@ -158,7 +170,7 @@ pub async fn make_battle_start(
     Some((quest_id, ratio)) => pay_quest_stamina(&client, session, quest_id, ratio).await?,
     None => Vec::new(),
   };
-  let (party, members) = battle_party_members(&client, session.user_id, party_id as i64).await?;
+  let (party, members) = battle_party_members_with(&client, session.user_id, party_id as i64, fame_quest).await?;
 
   // The quest's own lots (quest_chest) left every battle loading forever; these always work
   let mut response = CallResponse::new_success(Box::new(BattleStartResponse {
@@ -167,6 +179,7 @@ pub async fn make_battle_start(
     members,
   }));
   response.remote.extend(stamina_remote);
+  response.remote.extend(extra_remote);
   Ok(Unsigned(response))
 }
 
@@ -175,6 +188,16 @@ pub async fn battle_party_members(
   client: &deadpool_postgres::Client,
   user_id: crate::user::id::UserId,
   party_id: i64,
+) -> anyhow::Result<(BattleParty, Vec<BattleMember>)> {
+  battle_party_members_with(client, user_id, party_id, false).await
+}
+
+/// [fame_quest]: Fame Quests add the members' fame ranks to their stats.
+pub async fn battle_party_members_with(
+  client: &deadpool_postgres::Client,
+  user_id: crate::user::id::UserId,
+  party_id: i64,
+  fame_quest: bool,
 ) -> anyhow::Result<(BattleParty, Vec<BattleMember>)> {
   let party = fetch_battle_party(client, user_id, party_id).await?;
 
@@ -194,7 +217,16 @@ pub async fn battle_party_members(
   let bonuses = crate::api::character_enhance::character_bonuses(client, user_id).await?;
   let members = members
     .into_iter()
-    .filter_map(|member| Some(member.to_battle_member(party.form_of(member.id)?)))
+    .filter_map(|member| {
+      let fame = if fame_quest { crate::api::fame::fame_quest_bonus(&member) } else { [0; 5] };
+      let mut battle_member = member.to_battle_member(party.form_of(member.id)?);
+      battle_member.hp += fame[0];
+      battle_member.attack += fame[1];
+      battle_member.magicattack += fame[2];
+      battle_member.defense += fame[3];
+      battle_member.magicdefence += fame[4];
+      Some(battle_member)
+    })
     .map(|mut member| {
       if let Some(bonus) = bonuses.get(&member.character_id) {
         member.hp += bonus[0];

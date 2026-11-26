@@ -281,6 +281,11 @@ pub async fn update_party_form(
     .await
     .context("failed to execute query")?;
   info!(?params.party_id, ?rows_modified, "updated party forms");
+  for form in &params.form_info {
+    crate::api::fame::set_party_trait(&client, session.user_id, params.party_id as i64, form.form_no as i64, form.skill_pa_fame)
+      .await
+      .context("failed to save the form's fame trait")?;
+  }
 
   // Response is identical to party_info
   Ok(party_info(state, session).await)
@@ -894,6 +899,11 @@ pub async fn party_change(
         .context("failed to execute query")?;
 
       debug!(?params, "updated party trait");
+    }
+    PartyUpdateType::FameTrait => {
+      crate::api::fame::set_party_trait(&client, session.user_id, params.party_id as i64, params.form_id as i64, params.unique_id)
+        .await
+        .context("failed to save the form's fame trait")?;
     }
     _ => {
       warn!(
