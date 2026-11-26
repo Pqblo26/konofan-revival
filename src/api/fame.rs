@@ -304,6 +304,16 @@ fn draw_trait(rank: i64, character_id: i64) -> Option<i64> {
   weighted(&skills)
 }
 
+/// Rarity (1-3) of a Fame Trait.
+pub fn trait_rarity(skill_id: i64) -> i64 {
+  get_master_manager()
+    .get_master("skill_pa_fame")
+    .iter()
+    .find(|row| field(row, "skill_id") == skill_id)
+    .map(|row| field(row, "rare"))
+    .unwrap_or(0)
+}
+
 /// Three different choices for a member's potion.
 fn draw_choices(rank: i64, character_id: i64) -> Vec<FameQuestLotteryPotionChoice> {
   let mut lots: Vec<(i32, i64)> = get_master_manager()
