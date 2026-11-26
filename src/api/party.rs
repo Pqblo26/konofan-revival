@@ -435,6 +435,25 @@ pub async fn party_offer(state: Arc<AppState>, request: ApiRequest, session: Arc
     let equipment = load_equipment(&client, session.user_id).await?;
     suggest_equipment(&mut party, &members, &equipment, &weapon_stat, &resistances);
   }
+  // "Fame Trait": the rarest trait each main member has. Otherwise a trait stays only while its
+  // member is still the main one
+  let suggest_traits = flag("skill_pa_fame");
+  for form in party.party_forms.iter_mut() {
+    let traits = members
+      .iter()
+      .find(|member| member.id == form.main && form.main != 0)
+      .map(|member| member.skill_pa_fame_list.as_slice())
+      .unwrap_or_default();
+    if suggest_traits {
+      form.skill_pa_fame = traits
+        .iter()
+        .max_by_key(|t| (crate::api::fame::trait_rarity(t.skill_pa_fame_id), std::cmp::Reverse(t.user_skill_pa_fame_id)))
+        .map(|t| t.user_skill_pa_fame_id as i64)
+        .unwrap_or(0);
+    } else if !traits.iter().any(|t| t.user_skill_pa_fame_id as i64 == form.skill_pa_fame) {
+      form.skill_pa_fame = 0;
+    }
+  }
   // "Assist": the strongest assist the player has
   if flag("assist") {
     if let Some(assist) = best_assist() {
@@ -466,6 +485,11 @@ pub async fn party_offer(state: Arc<AppState>, request: ApiRequest, session: Arc
     update user_parties set assist_id = $3 where user_id = $1 and party_id = $2
   "#, &[&session.user_id, &party_no, &party.assist]).await.context("failed to update party assist")?;
   transaction.commit().await.context("failed to commit transaction")?;
+  for form in &party.party_forms {
+    crate::api::fame::set_party_trait(&client, session.user_id, party_no, form.form_no as i64, form.skill_pa_fame)
+      .await
+      .context("failed to save the form's fame trait")?;
+  }
   info!(?party_no, ?elements, ?stat, rank = progress.rank, assist = party.assist, forms = ?party.party_forms.iter().map(|form| (form.main, form.sub1, form.sub2, form.weapon, form.acc)).collect::<Vec<_>>(), "party suggested");
 
   // Response is identical to party_info
