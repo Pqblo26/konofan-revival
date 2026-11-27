@@ -834,6 +834,21 @@ impl IntoRemoteData for AddCharacter {
   }
 }
 
+/// Replaces a character the client already has (Trial of the Ancients, Potential Blessing): an
+/// [AddCharacter] for an existing character left the old stage lists on the character sheet until
+/// the game was restarted.
+pub struct UpdateCharacter(pub AddCharacter);
+
+impl IntoRemoteData for UpdateCharacter {
+  fn into_remote_data(self) -> Vec<RemoteData> {
+    let mut remote = self.0.into_remote_data();
+    for data in &mut remote {
+      data.cmd = RemoteDataCommand::UserParamUpdate as i32;
+    }
+    remote
+  }
+}
+
 pub struct ClearUserParams;
 
 impl IntoRemoteData for ClearUserParams {
