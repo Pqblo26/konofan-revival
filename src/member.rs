@@ -646,8 +646,16 @@ impl<'a> FetchUserParty<'a> {
   }
 }
 
+/// Whether the team screens get the Fame Trait each form has set. Off for now: with a trait set,
+/// Team > Party stayed on "Now Loading" for good (27/11), even with the trait's added stat sent.
+/// The trait is still saved; only the team screens do not see it.
+const SEND_PARTY_TRAITS: bool = false;
+
 /// The Fame Trait each form has set.
 async fn fill_party_traits(client: &tokio_postgres::Client, user_id: UserId, parties: &mut [Party]) {
+  if !SEND_PARTY_TRAITS {
+    return;
+  }
   let traits = crate::api::fame::party_traits(client, user_id).await;
   if traits.is_empty() {
     return;
