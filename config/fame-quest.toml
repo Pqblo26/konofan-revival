@@ -4,3 +4,12 @@
 # 12.000 y las demás 15.000 o más. Al 80 %: 9.600 y 12.000. Tras cambiarlo, reinicia el servidor
 # (el juego vuelve a descargar los datos si cambian).
 required_power_percent = 100
+
+# Mandar al juego el rasgo de fama puesto en cada formación. Con un rasgo puesto, Team → Party se
+# quedaba en «Now Loading» para siempre (27/11), así que va apagado; el rasgo se guarda igual.
+send_party_traits = false
+
+# Cómo van las estadísticas añadidas de cada rasgo (para probar qué espera el juego):
+#   "stat" (un rango de una estadística), "pa_skill" (solo una entrada de tipo 99),
+#   "pa_skill_first" o "stat_first" (las dos).
+trait_status = "stat"
