@@ -128,6 +128,9 @@ pub enum RemoteDataItemType {
   /// "Potential"
   CharacterPiece,
   EventTicket,
+  /// A Fame Trait the user owns: uniqid = user_skill_pa_fame id, item_id = skill_pa_fame id. The
+  /// team screen finds a form's trait among these (`UserParam.GetUnique(43, skill_pa_fame)`).
+  SkillPaFame,
   FamePotion,
   FameScroll,
   CollaborationMedal,
@@ -179,7 +182,7 @@ impl From<RemoteDataItemType> for i32 {
       // and [Wonder.Util.AssistUtil$$IsUnlockSubAssist]
       RemoteDataItemType::FameRank => 40,
       RemoteDataItemType::EventTicket => 42,
-      // TODO: 43 - skill pa fame unique id
+      RemoteDataItemType::SkillPaFame => 43,
       // See [Wonder.UI.Chara.MemberPlanningUnitCell$$GetSkillPaFameDatas]
       // and [Wonder.UI.Collection.LibrarySkillPaFamePanel$$SetUpSkillPaFameListView]
       RemoteDataItemType::FamePotion => 44,
@@ -229,7 +232,7 @@ impl From<i32> for RemoteDataItemType {
       39 => RemoteDataItemType::CharacterPiece,
       40 => RemoteDataItemType::FameRank,
       42 => RemoteDataItemType::EventTicket,
-      43 => RemoteDataItemType::Another(43), // TODO: 43 - skill pa fame unique id
+      43 => RemoteDataItemType::SkillPaFame,
       44 => RemoteDataItemType::FamePotion,
       45 => RemoteDataItemType::FameScroll,
       46 => RemoteDataItemType::CollaborationMedal,

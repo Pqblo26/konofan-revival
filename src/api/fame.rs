@@ -24,7 +24,7 @@ use tracing::{info, warn};
 
 use crate::api::master_all::get_master_manager;
 use crate::api::quest::quest_fame::{FameQuestLotteryPotion, FameQuestLotteryPotionChoice};
-use crate::api::{ApiRequest, RemoteData, RemoteDataItemType, SkillPaFame, SkillPaFameAddStatus};
+use crate::api::{ApiRequest, RemoteData, RemoteDataCommand, RemoteDataItemType, SkillPaFame, SkillPaFameAddStatus};
 use crate::blob::{AddSingletonItem, IntoRemoteData, UpdateMember};
 use crate::api::quest::progress::{in_date_window, is_cleared, load_progress, record_quest, ProgressMap};
 use crate::database::QueryExecutor;
@@ -118,8 +118,9 @@ fn trait_status(status: Vec<SkillPaFameAddStatus>, id: i64) -> Vec<SkillPaFameAd
 /// Settings of `config/fame-quest.toml` used here.
 #[derive(Debug, serde::Deserialize)]
 pub struct FameSettings {
-  /// Send the trait each form has set to the team screens (it left Team > Party loading forever)
-  #[serde(default)]
+  /// Send the trait each form has set to the team screens and battles. The client finds it among
+  /// the owned traits (remote data type 43); before those were sent, Team > Party hung.
+  #[serde(default = "default_true")]
   pub send_party_traits: bool,
   /// What a trait's added stats look like: "stat" (one stat rank), "pa_skill" (type 99 only),
   /// "pa_skill_first" or "stat_first" (both)
@@ -128,6 +129,10 @@ pub struct FameSettings {
   /// The account's Fame Rank is never below this one (it used to be a fixed 5)
   #[serde(default = "default_min_fame_rank")]
   pub min_fame_rank: i32,
+}
+
+fn default_true() -> bool {
+  true
 }
 
 fn default_min_fame_rank() -> i32 {
@@ -148,7 +153,7 @@ pub fn fame_settings() -> &'static FameSettings {
       .unwrap_or_else(|error| {
         warn!(%error, "failed to load config/fame-quest.toml");
         FameSettings {
-          send_party_traits: false,
+          send_party_traits: true,
           trait_status: default_trait_status(),
           min_fame_rank: default_min_fame_rank(),
         }
@@ -675,13 +680,16 @@ pub async fn fame_quest_potion_confirm(
   let limit = system_value("pa_skill_fame_possession_limit", 30);
   let cap = system_value("fame_status_bonus_individual_limit", 25) as i32;
   let mut members_touched = Vec::new();
+  let mut trait_changes = Vec::new();
 
   for entry in entries {
     for user_skill_pa_fame_id in &entry.discard {
       #[rustfmt::skip]
-      transaction.execute(/* language=postgresql */ r#"
+      let removed = transaction.query(/* language=postgresql */ r#"
         delete from user_skill_pa_fame where user_id = $1 and id = $2 and not is_lock
+        returning id, skill_pa_fame_id
       "#, &[&session.user_id, user_skill_pa_fame_id]).await?;
+      trait_changes.extend(removed.iter().map(|row| trait_remote(row.get(0), row.get(1), false)));
     }
     let mut member_id = entry.member_id;
     for (potion_id, choice_id) in &entry.selected {
@@ -700,10 +708,11 @@ pub async fn fame_quest_potion_confirm(
             warn!(owned, limit, "member's fame traits full, trait not kept");
           } else {
             #[rustfmt::skip]
-            transaction.execute(/* language=postgresql */ r#"
+            let row = transaction.query_one(/* language=postgresql */ r#"
               insert into user_skill_pa_fame (user_id, member_id, skill_pa_fame_id, add_status)
-              values ($1, $2, $3, $4)
+              values ($1, $2, $3, $4) returning id
             "#, &[&session.user_id, &potion.member_id, &choice.skill_pa_fame_id, &status_text(&choice.skill_pa_fame_status)]).await?;
+            trait_changes.push(trait_remote(row.get(0), choice.skill_pa_fame_id, true));
             info!(skill_pa_fame_id = choice.skill_pa_fame_id, member_id = potion.member_id, "fame trait kept");
           }
         }
@@ -741,6 +750,7 @@ pub async fn fame_quest_potion_confirm(
   members_touched.sort();
   members_touched.dedup();
   let mut response = CallResponse::new_success(Box::new(()));
+  response.remote.extend(trait_changes);
   let mut members = FetchUserMembersIn::new(&client).await?.run(session.user_id, &members_touched).await?;
   FetchUserMemberSkillsIn::new(&client)
     .await?
@@ -818,11 +828,15 @@ pub async fn discard_skill_pa_fame(state: Arc<AppState>, session: Arc<Session>, 
   info!(body = ?request.body, "discard_skill_pa_fame");
   let ids = trait_ids(&request.body);
   let client = state.get_database_client().await?;
+  let mut remote = Vec::new();
   if tables_ready(&client).await && !ids.is_empty() {
     #[rustfmt::skip]
-    let removed = client.execute(/* language=postgresql */ r#"
+    let removed_rows = client.query(/* language=postgresql */ r#"
       delete from user_skill_pa_fame where user_id = $1 and id = any($2) and not is_lock
+      returning id, skill_pa_fame_id
     "#, &[&session.user_id, &ids]).await?;
+    let removed = removed_rows.len();
+    remote.extend(removed_rows.iter().map(|row| trait_remote(row.get(0), row.get(1), false)));
     #[rustfmt::skip]
     client.execute(/* language=postgresql */ r#"
       delete from user_party_form_fame f where f.user_id = $1
@@ -830,7 +844,9 @@ pub async fn discard_skill_pa_fame(state: Arc<AppState>, session: Arc<Session>, 
     "#, &[&session.user_id]).await?;
     info!(?ids, removed, "fame traits discarded");
   }
-  Ok(Unsigned(CallResponse::new_success(Box::new(()))))
+  let mut response = CallResponse::new_success(Box::new(()));
+  response.remote.extend(remote);
+  Ok(Unsigned(response))
 }
 
 /// Locks or unlocks traits (`is_lock` if sent, otherwise it switches).
@@ -891,11 +907,13 @@ pub async fn use_fame_scroll_item(state: Arc<AppState>, session: Arc<Session>, r
     match scroll {
       Ok(item) => {
         #[rustfmt::skip]
-        transaction.execute(/* language=postgresql */ r#"
+        let row = transaction.query_one(/* language=postgresql */ r#"
           insert into user_skill_pa_fame (user_id, member_id, skill_pa_fame_id, add_status) values ($1, $2, $3, $4)
+          returning id
         "#, &[&session.user_id, &member_id, &skill_id, &status_saved]).await?;
         transaction.commit().await?;
         response.remote.extend(item.into_remote_data());
+        response.remote.push(trait_remote(row.get(0), skill_id, true));
         info!(skill_id, "fame scroll used");
       }
       Err(error) => warn!(?error, "no fame scroll to use"),
@@ -1089,5 +1107,40 @@ mod progress_tests {
     assert_eq!(fame_tasks(&stage, &[25, 23]), [false, true, true]);
     assert_eq!(fame_tasks(&stage, &[0, 99]), [false; 3]);
     assert_eq!(fame_tasks(&stage, &[]), [false; 3]);
+  }
+}
+
+/// Remote data for one owned trait: added (`add`) or deleted.
+pub fn trait_remote(user_skill_pa_fame_id: i64, skill_pa_fame_id: i64, add: bool) -> RemoteData {
+  RemoteData {
+    cmd: if add { RemoteDataCommand::UserParamAdd } else { RemoteDataCommand::UserParamDelete } as i32,
+    uid: None,
+    item_type: RemoteDataItemType::SkillPaFame.into(),
+    item_id: skill_pa_fame_id,
+    item_num: 1,
+    uniqid: user_skill_pa_fame_id as i32,
+    lv: 0,
+    tag: String::from("-"),
+    member_parameter: None,
+    character_parameter: None,
+    is_trial: None,
+  }
+}
+
+/// Every trait the user owns, for the login data.
+pub async fn traits_login_remote(client: &tokio_postgres::Client, user_id: UserId) -> Vec<RemoteData> {
+  if !tables_ready(client).await {
+    return Vec::new();
+  }
+  #[rustfmt::skip]
+  let rows = client.query(/* language=postgresql */ r#"
+    select id, skill_pa_fame_id from user_skill_pa_fame where user_id = $1 order by id
+  "#, &[&user_id]).await;
+  match rows {
+    Ok(rows) => rows.iter().map(|row| trait_remote(row.get(0), row.get(1), true)).collect(),
+    Err(error) => {
+      warn!(?error, "failed to read fame traits for the login");
+      Vec::new()
+    }
   }
 }
