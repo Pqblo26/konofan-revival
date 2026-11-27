@@ -95,11 +95,51 @@ fn status_text(status: &[SkillPaFameAddStatus]) -> String {
 /// The client reads a trait's first added stat when it sets up a form (an empty list left the
 /// team screen loading forever). Traits saved without one get a stat picked from their id.
 fn trait_status(status: Vec<SkillPaFameAddStatus>, id: i64) -> Vec<SkillPaFameAddStatus> {
-  if status.is_empty() {
+  let status = if status.is_empty() {
     vec![SkillPaFameAddStatus { kind: (id.rem_euclid(5) + 1) as i32, value: 1 }]
   } else {
     status
+  };
+  // Pa_skill (99) entry, to try what the team screen expects (see `trait_status` in fame-quest.toml)
+  let pa_skill = SkillPaFameAddStatus { kind: TRAIT, value: 0 };
+  match fame_settings().trait_status.as_str() {
+    "pa_skill" => vec![pa_skill],
+    "pa_skill_first" => std::iter::once(pa_skill).chain(status).collect(),
+    "stat_first" => status.into_iter().chain(std::iter::once(pa_skill)).collect(),
+    _ => status,
   }
+}
+
+/// Settings of `config/fame-quest.toml` used here.
+#[derive(Debug, serde::Deserialize)]
+pub struct FameSettings {
+  /// Send the trait each form has set to the team screens (it left Team > Party loading forever)
+  #[serde(default)]
+  pub send_party_traits: bool,
+  /// What a trait's added stats look like: "stat" (one stat rank), "pa_skill" (type 99 only),
+  /// "pa_skill_first" or "stat_first" (both)
+  #[serde(default = "default_trait_status")]
+  pub trait_status: String,
+}
+
+fn default_trait_status() -> String {
+  "stat".to_owned()
+}
+
+pub fn fame_settings() -> &'static FameSettings {
+  static SETTINGS: OnceLock<FameSettings> = OnceLock::new();
+  SETTINGS.get_or_init(|| {
+    let settings = config::Config::builder()
+      .add_source(config::File::with_name("config/fame-quest").required(false))
+      .build()
+      .and_then(|config| config.try_deserialize::<FameSettings>())
+      .unwrap_or_else(|error| {
+        warn!(%error, "failed to load config/fame-quest.toml");
+        FameSettings { send_party_traits: false, trait_status: default_trait_status() }
+      });
+    info!(?settings, "fame settings");
+    settings
+  })
 }
 
 /// A new trait's added stat: one rank of a random stat (1 HP ... 5 M. Def).
