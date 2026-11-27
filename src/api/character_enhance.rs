@@ -282,7 +282,7 @@ pub async fn character_enhance_multi_release(
   }
 
   let character = character_parameter(&transaction, session.user_id, character_id).await?;
-  remote.extend(AddCharacter::new(character_id as i32, character).into_remote_data());
+  remote.extend(crate::blob::UpdateCharacter(AddCharacter::new(character_id as i32, character)).into_remote_data());
   transaction.commit().await.context("failed to commit transaction")?;
   info!(character_id, ?stage_ids, ?cost, money, "released trial stages");
 

@@ -5,9 +5,10 @@
 # (el juego vuelve a descargar los datos si cambian).
 required_power_percent = 100
 
-# Mandar al juego el rasgo de fama puesto en cada formación. Con un rasgo puesto, Team → Party se
-# quedaba en «Now Loading» para siempre (27/11), así que va apagado; el rasgo se guarda igual.
-send_party_traits = false
+# Mandar al juego el rasgo de fama puesto en cada formación. El juego lo busca entre los rasgos que
+# tienes (datos de tipo 43 en el login); hasta mandarlos, Team → Party se quedaba en «Now Loading».
+# Con false el rasgo se guarda igual pero no se ve en el equipo ni cuenta en combate.
+send_party_traits = true
 
 # Cómo van las estadísticas añadidas de cada rasgo (para probar qué espera el juego):
 #   "stat" (un rango de una estadística), "pa_skill" (solo una entrada de tipo 99),

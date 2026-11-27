@@ -270,7 +270,7 @@ pub async fn character_piece_board_release(
   }
 
   let character = crate::api::character_enhance::character_parameter(&transaction, session.user_id, character_id).await?;
-  remote.extend(AddCharacter::new(character_id as i32, character).into_remote_data());
+  remote.extend(crate::blob::UpdateCharacter(AddCharacter::new(character_id as i32, character)).into_remote_data());
   transaction.commit().await.context("failed to commit transaction")?;
   info!(character_id, ?stage_ids, own_needed, generic_needed, ?new_rewards, "released board stages");
 

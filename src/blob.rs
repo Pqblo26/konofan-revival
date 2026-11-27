@@ -40,6 +40,7 @@ pub async fn get_login_remote_data(state: &AppState, session: &Session) -> Vec<R
     .unwrap();
 
   let fame_rank = crate::api::fame::account_fame_rank(&client, session.user_id).await;
+  let fame_traits = crate::api::fame::traits_login_remote(&client, session.user_id).await;
   let fetch_members = FetchUserMembers::new(&client).await.unwrap();
   let mut members = fetch_members.run(session.user_id).await.unwrap();
   FetchUserMemberSkillsIn::new(&client)
@@ -465,6 +466,7 @@ pub async fn get_login_remote_data(state: &AppState, session: &Session) -> Vec<R
     // AddItem::new(RemoteDataItemType::CharacterPiece, 0, 119, 2).into_remote_data(),
     // AddItem::new(RemoteDataItemType::CharacterPiece, 0, 128, 1).into_remote_data(),
     AddSingletonItem::new(RemoteDataItemType::FameRank, fame_rank).into_remote_data(),
+    fame_traits,
     // AddItem::new(RemoteDataItemType::ExchangeMedal, 0, 1001, 100100).into_remote_data(),
     // Goddess medals (1011, 1012) now live in user_items, see add_user_exchange_medals in migrations.rs
     // Dynamic analysis: 1 - time-limited dungeon, 2 - permanent dungeon
@@ -831,6 +833,21 @@ impl IntoRemoteData for AddCharacter {
       character_parameter: Some(self.character_parameter),
       is_trial: None,
     }]
+  }
+}
+
+/// Replaces a character the client already has (Trial of the Ancients, Potential Blessing): an
+/// [AddCharacter] for an existing character left the old stage lists on the character sheet until
+/// the game was restarted.
+pub struct UpdateCharacter(pub AddCharacter);
+
+impl IntoRemoteData for UpdateCharacter {
+  fn into_remote_data(self) -> Vec<RemoteData> {
+    let mut remote = self.0.into_remote_data();
+    for data in &mut remote {
+      data.cmd = RemoteDataCommand::UserParamUpdate as i32;
+    }
+    remote
   }
 }
 
