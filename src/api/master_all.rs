@@ -166,6 +166,26 @@ pub fn active_event_ids() -> &'static [String] {
   })
 }
 
+/// Percentage of the official power the Fame Quests ask for (`config/fame-quest.toml`, 100 = as
+/// in the original game).
+fn fame_quest_power_percent() -> i64 {
+  #[derive(Deserialize)]
+  struct FameQuest {
+    required_power_percent: i64,
+  }
+  let result = config::Config::builder()
+    .add_source(config::File::with_name("config/fame-quest").required(false))
+    .build()
+    .and_then(|config| config.try_deserialize::<FameQuest>());
+  match result {
+    Ok(config) => config.required_power_percent.clamp(0, 100),
+    Err(error) => {
+      warn!("failed to load config/fame-quest.toml, fame quests ask for the original power: {}", error);
+      100
+    }
+  }
+}
+
 pub fn is_active_event(event_id: &str) -> bool {
   active_event_ids().iter().any(|id| id == event_id)
 }
@@ -358,6 +378,20 @@ async fn patch_master(name: &str, value: &mut Value) {
       }
     }
     // Arena EX: open the last season that was held (2011 was never held), now and for 30 days
+    // Power a team needs to start a Fame Quest (the client greys out "Begin" below it)
+    "fame_quest_stage" => {
+      let percent = fame_quest_power_percent();
+      if percent != 100 {
+        info!(percent, "patching fame quest required power");
+        if let Some(array) = value.as_array_mut() {
+          for item in array {
+            let Some(power) = item.get_mut("required_power") else { continue };
+            let Some(required) = power.as_str().and_then(|text| text.parse::<i64>().ok()) else { continue };
+            *power = Value::String((required * percent / 100).to_string());
+          }
+        }
+      }
+    }
     "scorechallenge_ex" => {
       info!("patching scorechallenge_ex");
       if let Some(array) = value.as_array_mut() {

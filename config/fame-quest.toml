@@ -1,0 +1,6 @@
+# Poder de equipo que piden las Fame Quests, en % del original (100 = como en el juego).
+#
+# El juego no deja pulsar «Begin» por debajo de ese poder. En el original la fase más fácil pide
+# 12.000 y las demás 15.000 o más. Al 80 %: 9.600 y 12.000. Tras cambiarlo, reinicia el servidor
+# (el juego vuelve a descargar los datos si cambian).
+required_power_percent = 100
