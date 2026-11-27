@@ -130,7 +130,24 @@ pub struct FameQuestStageListRequest {
   pub mode: i32,
 }
 
-pub async fn fame_quest_stage_list(Params(params): Params<FameQuestStageListRequest>) -> impl IntoHandlerResponse {
+pub async fn fame_quest_stage_list(
+  state: Arc<AppState>,
+  session: Arc<Session>,
+  Params(params): Params<FameQuestStageListRequest>,
+) -> impl IntoHandlerResponse {
+  // Crowns achieved in each stage
+  let progress = match state.get_database_client().await {
+    Ok(client) => crate::api::quest::progress::load_progress(&client, session.user_id)
+      .await
+      .unwrap_or_else(|error| {
+        warn!(?error, "failed to read fame quest progress");
+        Default::default()
+      }),
+    Err(error) => {
+      warn!(?error, "no database connection for fame quest progress");
+      Default::default()
+    }
+  };
   let masters = get_masters().await;
   let areas: Vec<Value> = serde_json::from_str(&masters["fame_quest_area"].master_decompressed).unwrap();
   let stages: Vec<Value> = serde_json::from_str(&masters["fame_quest_stage"].master_decompressed).unwrap();
@@ -155,11 +172,14 @@ pub async fn fame_quest_stage_list(Params(params): Params<FameQuestStageListRequ
         stage.get("area_id").unwrap().as_str().unwrap().parse::<i32>().unwrap() == params.area_id
           && stage.get("mode").unwrap().as_str().unwrap().parse::<i32>().unwrap() == params.mode
       })
-      .map(|stage| FameQuestStageInfo {
-        stage_id: stage.get("id").unwrap().as_str().unwrap().parse::<i32>().unwrap(),
-        task1: 0,
-        task2: 0,
-        task3: 0,
+      .map(|stage| {
+        let stage_id = stage.get("id").unwrap().as_str().unwrap().parse::<i32>().unwrap();
+        let tasks = progress.get(&stage_id).map(|progress| progress.tasks).unwrap_or_default();
+        FameQuestStageInfo {
+        stage_id,
+        task1: tasks[0] as i32,
+        task2: tasks[1] as i32,
+        task3: tasks[2] as i32,
         expired_at: 0,
         release_condition: FameQuestReleaseConditionInfo {
           key_quest: 2,
@@ -167,6 +187,7 @@ pub async fn fame_quest_stage_list(Params(params): Params<FameQuestStageListRequ
           event_story: 2,
         },
         bonus_skill_pa_fame_rate: 0,
+        }
       })
       .collect::<Vec<_>>(),
     // All areas for the given rank, thanks https://www.youtube.com/watch?v=Muk190J7LFo
@@ -297,6 +318,14 @@ pub async fn fame_quest_result(
   let mut rewards = stage.rewards.clone();
   apply_reward_multiplier(&transaction, &session, &mut rewards).await?;
   let update_items = grant_rewards(&transaction, &session, &rewards).await?;
+  let fame_record = crate::api::fame::record_fame_quest(
+    &transaction,
+    session.user_id,
+    params.stage_id,
+    params.win != 0,
+    &params.clear_mission_list,
+  )
+  .await?;
   transaction.commit().await.context("failed to commit transaction")?;
   let wallet_remote = pay_quest_money(&client, &session, stage.money as i64).await?;
 
@@ -318,8 +347,8 @@ pub async fn fame_quest_result(
   let lottery_potion_list =
     crate::api::fame::draw_potions(&client, session.user_id, params.stage_id, &members, params.win != 0).await;
   let mut response = CallResponse::new_success(Box::new(FameQuestResultResponse {
-    // The account's fame rank is not tracked yet; 1 showed "Fame Rank UP!" after every quest
-    fame_rank_up: 0,
+    // 1 shows "Fame Rank UP!"
+    fame_rank_up: fame_record.fame_rank_up as i32,
     exp: stage.player_exp,
     lvup: 0,
     money: stage.money,
@@ -335,10 +364,21 @@ pub async fn fame_quest_result(
         is_rare: item.item_rare,
       })
       .collect(),
-    mission_reward: vec![],
+    mission_reward: fame_record
+      .crown_rewards
+      .iter()
+      .map(|&(mission, itemtype, itemid, itemnum)| BattleClearReward {
+        itemtype,
+        itemid,
+        itemnum,
+        mission,
+        is_rare: false,
+      })
+      .collect(),
     lottery_potion_list,
   }));
   response.remote.extend(update_items);
+  response.remote.extend(fame_record.remote);
   response.remote.extend(wallet_remote);
   Ok(Unsigned(response))
 }

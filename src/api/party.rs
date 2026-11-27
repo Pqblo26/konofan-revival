@@ -741,15 +741,24 @@ pub async fn party_change_list(
   session: Arc<Session>,
   Params(params): Params<PartyChangeListRequest>,
 ) -> impl IntoHandlerResponse {
-  warn!(?params, "encountered stub: party_change_list");
+  debug!(?params, "party_change_list");
 
   let assists = get_master_manager().get_master("assist_details");
-  // Every weapon and accessory the player owns, to choose from
+  // Every member, weapon and accessory the player owns, to choose from
   let client = state.get_database_client().await?;
   let (weapons, accessories) = equipment_wire(&load_equipment(&client, session.user_id).await?);
+  let members = FetchUserMembers::new(&client).await?.run(session.user_id).await?;
 
   Ok(Unsigned(PartychangelistResponseDto {
-    members: vec![],
+    members: members
+      .iter()
+      .map(|member| ChangeListPartyMember {
+        id: member.id as i64,
+        lv: member.level(),
+        member_id: member.prototype.id,
+        character_id: member.prototype.character_id,
+      })
+      .collect(),
     weapons: weapons
       .into_iter()
       .map(|weapon| ChangeListPartyWeapon { id: weapon.id, weapon_id: weapon.weapon_id })

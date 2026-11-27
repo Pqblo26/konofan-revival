@@ -39,6 +39,7 @@ pub async fn get_login_remote_data(state: &AppState, session: &Session) -> Vec<R
     .context("failed to execute query")
     .unwrap();
 
+  let fame_rank = crate::api::fame::account_fame_rank(&client, session.user_id).await;
   let fetch_members = FetchUserMembers::new(&client).await.unwrap();
   let mut members = fetch_members.run(session.user_id).await.unwrap();
   FetchUserMemberSkillsIn::new(&client)
@@ -463,7 +464,7 @@ pub async fn get_login_remote_data(state: &AppState, session: &Session) -> Vec<R
     // AddItem::new(RemoteDataItemType::CharacterPiece, 0, 116, 1).into_remote_data(),
     // AddItem::new(RemoteDataItemType::CharacterPiece, 0, 119, 2).into_remote_data(),
     // AddItem::new(RemoteDataItemType::CharacterPiece, 0, 128, 1).into_remote_data(),
-    AddSingletonItem::new(RemoteDataItemType::FameRank, 5).into_remote_data(),
+    AddSingletonItem::new(RemoteDataItemType::FameRank, fame_rank).into_remote_data(),
     // AddItem::new(RemoteDataItemType::ExchangeMedal, 0, 1001, 100100).into_remote_data(),
     // Goddess medals (1011, 1012) now live in user_items, see add_user_exchange_medals in migrations.rs
     // Dynamic analysis: 1 - time-limited dungeon, 2 - permanent dungeon
