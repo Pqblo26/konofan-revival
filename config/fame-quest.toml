@@ -13,3 +13,8 @@ send_party_traits = false
 #   "stat" (un rango de una estadística), "pa_skill" (solo una entrada de tipo 99),
 #   "pa_skill_first" o "stat_first" (las dos).
 trait_status = "stat"
+
+# Rango de fama mínimo de la cuenta. El rango sube al superar la misión que pide cada rango
+# (maestro fame_rank: 710021 da el 2, 720041 el 3, ... 760111 el 7), pero nunca baja de este.
+# Antes era un 5 fijo, así que se deja en 5 para no cerrar nada que ya estuviera abierto.
+min_fame_rank = 5

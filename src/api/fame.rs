@@ -25,7 +25,12 @@ use tracing::{info, warn};
 use crate::api::master_all::get_master_manager;
 use crate::api::quest::quest_fame::{FameQuestLotteryPotion, FameQuestLotteryPotionChoice};
 use crate::api::{ApiRequest, RemoteData, RemoteDataItemType, SkillPaFame, SkillPaFameAddStatus};
-use crate::blob::{IntoRemoteData, UpdateMember};
+use crate::blob::{AddSingletonItem, IntoRemoteData, UpdateMember};
+use crate::api::quest::progress::{in_date_window, is_cleared, load_progress, record_quest, ProgressMap};
+use crate::database::QueryExecutor;
+use crate::user::grant::grant_items;
+use crate::user::wallet::Wallet;
+use chrono::{DateTime, Utc};
 use crate::call::{CallCustom, CallResponse};
 use crate::handler::{IntoHandlerResponse, Unsigned};
 use crate::item::UpdateItemCountBy;
@@ -120,6 +125,13 @@ pub struct FameSettings {
   /// "pa_skill_first" or "stat_first" (both)
   #[serde(default = "default_trait_status")]
   pub trait_status: String,
+  /// The account's Fame Rank is never below this one (it used to be a fixed 5)
+  #[serde(default = "default_min_fame_rank")]
+  pub min_fame_rank: i32,
+}
+
+fn default_min_fame_rank() -> i32 {
+  5
 }
 
 fn default_trait_status() -> String {
@@ -135,7 +147,11 @@ pub fn fame_settings() -> &'static FameSettings {
       .and_then(|config| config.try_deserialize::<FameSettings>())
       .unwrap_or_else(|error| {
         warn!(%error, "failed to load config/fame-quest.toml");
-        FameSettings { send_party_traits: false, trait_status: default_trait_status() }
+        FameSettings {
+          send_party_traits: false,
+          trait_status: default_trait_status(),
+          min_fame_rank: default_min_fame_rank(),
+        }
       });
     info!(?settings, "fame settings");
     settings
@@ -886,4 +902,192 @@ pub async fn use_fame_scroll_item(state: Arc<AppState>, session: Arc<Session>, r
     }
   }
   Ok(Unsigned(response))
+}
+
+/// The account's Fame Rank ("fame_rank" master): rank N is reached by clearing its `unlock_quest`
+/// once its `unlock_date` has passed, in order. Never below `min_fame_rank` (config/fame-quest.toml).
+pub fn fame_rank_from_progress(progress: &ProgressMap, now: DateTime<Utc>) -> i32 {
+  let mut rows = get_master_manager().get_master("fame_rank").iter().collect::<Vec<_>>();
+  rows.sort_by_key(|row| field(row, "rank"));
+  let max_rank = rows.iter().map(|row| field(row, "rank") as i32).max().unwrap_or(1);
+  let mut rank = 1;
+  for row in rows {
+    let row_rank = field(row, "rank") as i32;
+    if row_rank <= 1 {
+      continue;
+    }
+    let quest = field(row, "unlock_quest") as i32;
+    let date_ok = in_date_window(row["unlock_date"].as_str().unwrap_or("0"), "0", now);
+    if date_ok && (quest == 0 || is_cleared(progress, quest)) {
+      rank = row_rank;
+    } else {
+      break;
+    }
+  }
+  rank.max(fame_settings().min_fame_rank).clamp(1, max_rank)
+}
+
+/// The account's Fame Rank, for the login data.
+pub async fn account_fame_rank<'a>(executor: impl Into<QueryExecutor<'a>>, user_id: UserId) -> i32 {
+  match load_progress(executor, user_id).await {
+    Ok(progress) => fame_rank_from_progress(&progress, Utc::now()),
+    Err(error) => {
+      warn!(?error, "failed to read quest progress for the fame rank");
+      fame_settings().min_fame_rank.max(1)
+    }
+  }
+}
+
+/// What a won Fame Quest adds: its clear and crowns, the first-time crown rewards, and maybe a
+/// higher Fame Rank.
+#[derive(Debug, Default)]
+pub struct FameQuestRecord {
+  pub fame_rank_up: bool,
+  /// (crown mission id, item type, item id, count)
+  pub crown_rewards: Vec<(i32, i32, i64, i32)>,
+  pub remote: Vec<RemoteData>,
+}
+
+/// Crowns achieved from the client's `clear_mission_list`: crown numbers (1-3) or the stage's
+/// mission ids ("fame_quest_mission" ids start at 11).
+pub fn fame_tasks(stage: &Value, clear_mission_list: &[i32]) -> [bool; 3] {
+  let missions = [field(stage, "mission1"), field(stage, "mission2"), field(stage, "mission3")];
+  let mut tasks = [false; 3];
+  for &value in clear_mission_list {
+    if (1..=3).contains(&value) {
+      tasks[value as usize - 1] = true;
+    } else if value > 3 {
+      if let Some(index) = missions.iter().position(|&mission| mission == value as i64) {
+        tasks[index] = true;
+      }
+    }
+  }
+  tasks
+}
+
+/// Items of a "fame_quest_reward" row: each confirmed list drawn its lottery count times, and each
+/// random list with its rate (per 100).
+fn fame_reward_items(reward_id: i64) -> Vec<(i32, i64, i32)> {
+  let masters = get_master_manager();
+  let Some(reward) = masters
+    .get_master("fame_quest_reward")
+    .iter()
+    .find(|row| field(row, "id") == reward_id)
+  else {
+    return Vec::new();
+  };
+  let lists = masters.get_master("fame_quest_reward_item_list");
+  let draw = |list_id: i64| -> Option<(i32, i64, i32)> {
+    let rows = lists.iter().filter(|row| field(row, "item_list_id") == list_id).collect::<Vec<_>>();
+    let total: i64 = rows.iter().map(|row| field(row, "weight").max(0)).sum();
+    if rows.is_empty() {
+      return None;
+    }
+    let mut roll = if total > 0 { rand::rng().random_range(0..total) } else { 0 };
+    let row = rows
+      .iter()
+      .find(|row| {
+        let weight = field(row, "weight").max(0);
+        if roll < weight {
+          true
+        } else {
+          roll -= weight;
+          false
+        }
+      })
+      .unwrap_or(&rows[0]);
+    Some((field(row, "item_type") as i32, field(row, "item_id"), field(row, "item_num") as i32))
+  };
+  let mut items = Vec::new();
+  for n in 1..=4 {
+    let list_id = field(reward, &format!("confirm_reward{n}"));
+    if list_id == 0 {
+      continue;
+    }
+    for _ in 0..field(reward, &format!("confirm_reward{n}_lottery_count")).max(1) {
+      items.extend(draw(list_id));
+    }
+  }
+  for n in 1..=4 {
+    let list_id = field(reward, &format!("random_reward{n}"));
+    let rate = field(reward, &format!("random_reward{n}_rate"));
+    if list_id != 0 && rand::rng().random_range(0..100) < rate {
+      items.extend(draw(list_id));
+    }
+  }
+  items
+}
+
+/// Saves a Fame Quest battle: wins and crowns in `user_quest_progress` (shared with the other
+/// quests), the crown rewards the first time each crown is achieved, and the Fame Rank.
+pub async fn record_fame_quest(
+  transaction: &deadpool_postgres::Transaction<'_>,
+  user_id: UserId,
+  stage_id: i32,
+  win: bool,
+  clear_mission_list: &[i32],
+) -> anyhow::Result<FameQuestRecord> {
+  let mut record = FameQuestRecord::default();
+  let Some(stage) = get_master_manager()
+    .get_master("fame_quest_stage")
+    .iter()
+    .find(|row| field(row, "id") == stage_id as i64)
+  else {
+    warn!(?stage_id, "unknown fame quest stage, progress not saved");
+    return Ok(record);
+  };
+  let now = Utc::now();
+  let rank_before = fame_rank_from_progress(&load_progress(transaction, user_id).await?, now);
+  let tasks = if win { fame_tasks(stage, clear_mission_list) } else { [false; 3] };
+  let outcome = record_quest(transaction, user_id, stage_id, if win { 1 } else { 0 }, tasks).await?;
+
+  let mut items = Vec::new();
+  for index in 0..3 {
+    if !outcome.new_tasks[index] {
+      continue;
+    }
+    let reward_id = field(stage, &format!("mission{}_reward", index + 1));
+    for (item_type, item_id, num) in fame_reward_items(reward_id) {
+      record.crown_rewards.push((field(stage, &format!("mission{}", index + 1)) as i32, item_type, item_id, num));
+      items.push((item_type, item_id, num));
+    }
+  }
+  if !items.is_empty() {
+    let mut wallet = Wallet::load(transaction, user_id).await?;
+    record.remote.extend(grant_items(transaction, user_id, &mut wallet, &items).await?);
+    wallet.save(transaction, user_id).await?;
+    record.remote.extend(wallet.to_remote_data());
+  }
+
+  let rank_after = fame_rank_from_progress(&load_progress(transaction, user_id).await?, now);
+  if rank_after > rank_before {
+    record.fame_rank_up = true;
+    record.remote.extend(AddSingletonItem::new(RemoteDataItemType::FameRank, rank_after - rank_before).into_remote_data());
+  }
+  info!(
+    ?stage_id,
+    ?win,
+    ?clear_mission_list,
+    crowns = ?outcome.progress.tasks,
+    new_crowns = ?outcome.new_tasks,
+    rewards = ?record.crown_rewards,
+    rank_before,
+    rank_after,
+    "fame quest recorded"
+  );
+  Ok(record)
+}
+
+#[cfg(test)]
+mod progress_tests {
+  use super::fame_tasks;
+
+  #[test]
+  fn crowns_from_numbers_or_mission_ids() {
+    let stage = serde_json::json!({"mission1": "27", "mission2": "25", "mission3": "23"});
+    assert_eq!(fame_tasks(&stage, &[1, 3]), [true, false, true]);
+    assert_eq!(fame_tasks(&stage, &[25, 23]), [false, true, true]);
+    assert_eq!(fame_tasks(&stage, &[0, 99]), [false; 3]);
+    assert_eq!(fame_tasks(&stage, &[]), [false; 3]);
+  }
 }
