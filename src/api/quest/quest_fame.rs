@@ -307,17 +307,19 @@ pub async fn fame_quest_result(
 
   let (member_exp, love) =
     make_battle_member_exp_and_character_love(&party, &client, &session, stage.intimacy_exp).await?;
-  // Front members: the main member of each form
-  let front_members: Vec<i64> = party
+  // The main member of each form; forms 1-3 are the front ones
+  let members: Vec<(i64, bool)> = party
     .party_forms
     .iter()
-    .map(|form| form.main as i64)
-    .filter(|id| *id > 0)
+    .enumerate()
+    .filter(|(_, form)| form.main > 0)
+    .map(|(index, form)| (form.main as i64, index < 3))
     .collect();
   let lottery_potion_list =
-    crate::api::fame::draw_potions(&client, session.user_id, params.stage_id, &front_members, params.win != 0).await;
+    crate::api::fame::draw_potions(&client, session.user_id, params.stage_id, &members, params.win != 0).await;
   let mut response = CallResponse::new_success(Box::new(FameQuestResultResponse {
-    fame_rank_up: 1,
+    // The account's fame rank is not tracked yet; 1 showed "Fame Rank UP!" after every quest
+    fame_rank_up: 0,
     exp: stage.player_exp,
     lvup: 0,
     money: stage.money,

@@ -92,6 +92,21 @@ fn status_text(status: &[SkillPaFameAddStatus]) -> String {
   serde_json::to_string(&status.iter().map(|s| (s.kind, s.value)).collect::<Vec<_>>()).unwrap()
 }
 
+/// The client reads a trait's first added stat when it sets up a form (an empty list left the
+/// team screen loading forever). Traits saved without one get a stat picked from their id.
+fn trait_status(status: Vec<SkillPaFameAddStatus>, id: i64) -> Vec<SkillPaFameAddStatus> {
+  if status.is_empty() {
+    vec![SkillPaFameAddStatus { kind: (id.rem_euclid(5) + 1) as i32, value: 1 }]
+  } else {
+    status
+  }
+}
+
+/// A new trait's added stat: one rank of a random stat (1 HP ... 5 M. Def).
+fn random_trait_status() -> Vec<SkillPaFameAddStatus> {
+  vec![SkillPaFameAddStatus { kind: rand::rng().random_range(1..=5), value: 1 }]
+}
+
 /// Fills the fame ranks and the traits each member found (members fetched from the database).
 pub async fn fill_member_fame(client: &tokio_postgres::Client, user_id: UserId, members: &mut [Member]) {
   if members.is_empty() || !tables_ready(client).await {
@@ -128,7 +143,7 @@ async fn fill_member_fame_impl(
     by_member.entry(row.get(1)).or_default().push(SkillPaFame {
       skill_pa_fame_id: row.get(2),
       user_skill_pa_fame_id: id as i32,
-      add_status_list: parse_status(&status),
+      add_status_list: trait_status(parse_status(&status), id),
     });
   }
   for member in members.iter_mut() {
@@ -331,7 +346,7 @@ fn draw_choices(rank: i64, character_id: i64) -> Vec<FameQuestLotteryPotionChoic
         potion_choice_id: 0,
         potion_type,
         skill_pa_fame_id: skill_id,
-        skill_pa_fame_status: vec![],
+        skill_pa_fame_status: random_trait_status(),
       }
     } else {
       FameQuestLotteryPotionChoice {
@@ -349,13 +364,15 @@ fn draw_choices(rank: i64, character_id: i64) -> Vec<FameQuestLotteryPotionChoic
   choices
 }
 
-/// Draws the potions of a finished Fame Quest for its front members and keeps them until the
-/// player picks. Returns what the result screen shows.
+/// Draws the potions of a finished Fame Quest and keeps them until the player picks. Every
+/// member of the team has the [fame_bonus_incidence]% chance; Fame Supplements make it sure only
+/// for the front ones (forms 1-3), as the game says. [members]: (member id, is front).
+/// Returns what the result screen shows.
 pub async fn draw_potions(
   client: &tokio_postgres::Client,
   user_id: UserId,
   stage_id: i32,
-  front_members: &[i64],
+  members: &[(i64, bool)],
   win: bool,
 ) -> Vec<FameQuestLotteryPotion> {
   let (supplements, runs) = pending_runs().lock().unwrap().remove(&user_id).unwrap_or((0, 1));
@@ -365,10 +382,11 @@ pub async fn draw_potions(
   let chance = system_value("fame_bonus_incidence", 20);
   let rank = quest_rank(stage_id);
   let mut potions = Vec::new();
-  for &member_id in front_members {
+  for &(member_id, front) in members {
     let character_id = MemberPrototype::load_from_id(member_id).character_id;
     for run in 0..runs {
-      if run >= supplements && rand::rng().random_range(0..100) >= chance {
+      let sure = front && run < supplements;
+      if !sure && rand::rng().random_range(0..100) >= chance {
         continue;
       }
       let choices = draw_choices(rank, character_id);
@@ -802,10 +820,12 @@ pub async fn use_fame_scroll_item(state: Arc<AppState>, session: Arc<Session>, r
     .max()
     .unwrap_or(1);
   let skill_id = draw_trait(max_rank, character_id).unwrap_or(0);
+  let status = random_trait_status();
+  let status_saved = status_text(&status);
   let mut response = CallResponse::new_success(Box::new(UseFameScrollItemResponse {
     skill_pa_fame_list: SkillPaFameItem {
       skill_pa_fame_id: skill_id,
-      skill_pa_fame_status: vec![],
+      skill_pa_fame_status: status,
     },
   }));
   if tables_ready(&client).await && skill_id > 0 {
@@ -816,8 +836,8 @@ pub async fn use_fame_scroll_item(state: Arc<AppState>, session: Arc<Session>, r
       Ok(item) => {
         #[rustfmt::skip]
         transaction.execute(/* language=postgresql */ r#"
-          insert into user_skill_pa_fame (user_id, member_id, skill_pa_fame_id, add_status) values ($1, $2, $3, '[]')
-        "#, &[&session.user_id, &member_id, &skill_id]).await?;
+          insert into user_skill_pa_fame (user_id, member_id, skill_pa_fame_id, add_status) values ($1, $2, $3, $4)
+        "#, &[&session.user_id, &member_id, &skill_id, &status_saved]).await?;
         transaction.commit().await?;
         response.remote.extend(item.into_remote_data());
         info!(skill_id, "fame scroll used");
