@@ -187,26 +187,168 @@ pub struct BattleMarathonInfoRequest {
   pub event_id: i32,
 }
 
-/// Boss defeats of an event (single and multi boss stages). This server has one player, so the
-/// total is the player's own count. Boss count rewards (`event_boss_count`) are not sent yet.
+/// The player's boss defeats in an event (single and multi), from the quest progress.
+async fn event_boss_defeats(client: &deadpool_postgres::Client, user_id: UserId, event_id: i32) -> anyhow::Result<i32> {
+  let progress = crate::api::quest::progress::load_progress(client, user_id).await?;
+  let event_id = event_id.to_string();
+  Ok(
+    ["event_marathon_quest_stage_boss_single", "event_marathon_quest_stage_boss_multi"]
+      .into_iter()
+      .flat_map(|master| get_master_manager().get_master(master).iter())
+      .filter(|boss| boss["event_id"].as_str() == Some(event_id.as_str()))
+      .filter_map(|boss| boss["id"].as_str().and_then(|id| id.parse::<i32>().ok()))
+      .map(|quest_id| progress.get(&quest_id).map_or(0, |progress| progress.clear_count))
+      .sum(),
+  )
+}
+
+/// "All Players" defeats of an all-participation event: alone, the player's own defeats times
+/// `all_players_multiplier` (config/events.toml), so its goals (100 000 and more) can be reached.
+pub fn all_players_multiplier() -> i64 {
+  static MULTIPLIER: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+  *MULTIPLIER.get_or_init(|| {
+    #[derive(Deserialize)]
+    struct Events {
+      #[serde(default = "default_multiplier")]
+      all_players_multiplier: i64,
+    }
+    fn default_multiplier() -> i64 {
+      10000
+    }
+    let multiplier = config::Config::builder()
+      .add_source(config::File::with_name("config/events").required(false))
+      .build()
+      .and_then(|config| config.try_deserialize::<Events>())
+      .map(|events| events.all_players_multiplier.max(1))
+      .unwrap_or_else(|error| {
+        warn!(%error, "failed to read all_players_multiplier from config/events.toml");
+        10000
+      });
+    info!(multiplier, "all players multiplier");
+    multiplier
+  })
+}
+
+/// Goals of an event's all-participation mission ("event_boss_count" rows of its
+/// `boss_count_group_id`): (count_id, count_point, pack_id).
+fn boss_count_goals(event_id: i32) -> Vec<(i32, i64, i64)> {
+  let int = |row: &Value, key: &str| row[key].as_str().and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+  let masters = get_master_manager();
+  let Some(group) = masters
+    .get_master("event_config")
+    .iter()
+    .find(|row| int(row, "event_id") == event_id as i64)
+    .map(|row| int(row, "boss_count_group_id"))
+    .filter(|group| *group != 0)
+  else {
+    return Vec::new();
+  };
+  let mut goals = masters
+    .get_master("event_boss_count")
+    .iter()
+    .filter(|row| int(row, "group_id") == group)
+    .map(|row| (int(row, "id") as i32, int(row, "count_point"), int(row, "pack_id")))
+    .collect::<Vec<_>>();
+  goals.sort_by_key(|goal| goal.1);
+  goals
+}
+
+/// Goals already received; kept in `user_missions` with the goal id as mission id.
+async fn received_boss_count_goals(
+  client: &deadpool_postgres::Client,
+  user_id: UserId,
+  goals: &[(i32, i64, i64)],
+) -> anyhow::Result<std::collections::HashSet<i32>> {
+  let ids = goals.iter().map(|goal| goal.0).collect::<Vec<_>>();
+  #[rustfmt::skip]
+  let rows = client.query(/* language=postgresql */ r#"
+    select mission_id from user_missions where user_id = $1 and mission_id = any($2)
+  "#, &[&user_id, &ids]).await.context("failed to read received boss count goals")?;
+  Ok(rows.iter().map(|row| row.get(0)).collect())
+}
+
 async fn total_boss_info(state: &AppState, session: &Session, event_id: i32) -> anyhow::Result<TotalBossInfo> {
   let client = state.get_database_client().await?;
-  let progress = crate::api::quest::progress::load_progress(&client, session.user_id).await?;
-  let event_id = event_id.to_string();
-  let defeats: i32 = ["event_marathon_quest_stage_boss_single", "event_marathon_quest_stage_boss_multi"]
-    .into_iter()
-    .flat_map(|master| get_master_manager().get_master(master).iter())
-    .filter(|boss| boss["event_id"].as_str() == Some(event_id.as_str()))
-    .filter_map(|boss| boss["id"].as_str().and_then(|id| id.parse::<i32>().ok()))
-    .map(|quest_id| progress.get(&quest_id).map_or(0, |progress| progress.clear_count))
-    .sum();
+  let defeats = event_boss_defeats(&client, session.user_id, event_id).await?;
+  let goals = boss_count_goals(event_id);
+  let received = received_boss_count_goals(&client, session.user_id, &goals).await?;
   Ok(TotalBossInfo {
-    total_defeat_count: defeats,
+    total_defeat_count: (defeats as i64 * all_players_multiplier()).min(i32::MAX as i64) as i32,
     my_defeat_count: defeats,
-    boss_count_rewards: vec![],
-    ranking: 0,
-    in_ranking_period: false,
+    boss_count_rewards: goals
+      .iter()
+      .map(|goal| BossCountRewards {
+        count_id: goal.0,
+        is_received: received.contains(&goal.0),
+      })
+      .collect(),
+    // Alone, the player is first once they have a defeat (0 shows "Unranked")
+    ranking: if defeats > 0 { 1 } else { 0 },
+    in_ranking_period: true,
   })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReceiveEventBossCountRewardRequest {
+  pub event_id: i32,
+}
+
+// See [Wonder_Api_ReceiveEventBossCountRewardResponseDto_Fields]
+#[derive(Debug, Serialize)]
+pub struct ReceiveEventBossCountReward {
+  pub received_rewards: Vec<EventBossCountReceivedReward>,
+}
+
+impl CallCustom for ReceiveEventBossCountReward {}
+
+// See [Wonder_Api_EventBossCountReceivedRewardResponseDto_Fields]
+#[derive(Debug, Serialize)]
+pub struct EventBossCountReceivedReward {
+  pub item_type: i32,
+  pub item_id: i64,
+  pub item_num: i32,
+}
+
+/// "Receive" in the all-participation mission: every reached goal not received yet, at once.
+pub async fn receive_event_boss_count_reward(
+  state: Arc<AppState>,
+  session: Arc<Session>,
+  Params(params): Params<ReceiveEventBossCountRewardRequest>,
+) -> impl IntoHandlerResponse {
+  let mut client = state.get_database_client().await?;
+  let defeats = event_boss_defeats(&client, session.user_id, params.event_id).await?;
+  let total = defeats as i64 * all_players_multiplier();
+  let goals = boss_count_goals(params.event_id);
+  let received = received_boss_count_goals(&client, session.user_id, &goals).await?;
+  let pending = goals
+    .iter()
+    .filter(|goal| goal.1 <= total && !received.contains(&goal.0))
+    .collect::<Vec<_>>();
+
+  let transaction = client.transaction().await.context("failed to start transaction")?;
+  let mut wallet = Wallet::load(&transaction, session.user_id).await?;
+  let mut items = Vec::new();
+  for goal in &pending {
+    items.extend(crate::api::quest::finish::pack_items(goal.2));
+    #[rustfmt::skip]
+    transaction.execute(/* language=postgresql */ r#"
+      insert into user_missions (user_id, mission_id) values ($1, $2) on conflict do nothing
+    "#, &[&session.user_id, &goal.0]).await.context("failed to save boss count goal")?;
+  }
+  let remote = grant_items(&transaction, session.user_id, &mut wallet, &items).await?;
+  wallet.save(&transaction, session.user_id).await?;
+  transaction.commit().await.context("failed to commit transaction")?;
+  info!(event_id = params.event_id, defeats, total, goals = ?pending.iter().map(|goal| goal.0).collect::<Vec<_>>(), ?items, "boss count rewards received");
+
+  let mut response = CallResponse::new_success(Box::new(ReceiveEventBossCountReward {
+    received_rewards: items
+      .iter()
+      .map(|&(item_type, item_id, item_num)| EventBossCountReceivedReward { item_type, item_id, item_num })
+      .collect(),
+  }));
+  response.remote.extend(remote);
+  response.remote.extend(wallet.to_remote_data());
+  Ok(Unsigned(response))
 }
 
 pub async fn battle_marathon_info(

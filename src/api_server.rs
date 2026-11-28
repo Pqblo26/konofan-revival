@@ -290,6 +290,7 @@ async fn api_call(
     .handle("multi_battle_room_status", battle_multi::multi_battle_room_status)
     .handle("marathon_single_start", battle::marathon_single_start)
     .handle("marathon_single_log", battle::marathon_single_log)
+    .handle("receive_event_boss_count_reward", mission::receive_event_boss_count_reward)
     .handle("marathon_single_result", battle::marathon_single_result)
     .handle("marathon_multi_start", battle_multi::marathon_multi_start)
     .handle("marathon_multi_battling", battle_multi::marathon_multi_battling)
