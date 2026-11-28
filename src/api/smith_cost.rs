@@ -85,7 +85,51 @@ pub fn item_price(item_type: i32, item_id: i64) -> i64 {
     .unwrap_or(0)
 }
 
+/// Weapons (5) and accessories (6) used as materials are not items: the client picks the copies
+/// (`material_equipments`) and [use_material_equipment] takes them.
+fn is_equipment(item_type: i32) -> bool {
+  matches!(item_type, 5 | 6)
+}
+
+/// Takes the weapons and accessories the client chose as materials (locked ones stay) and checks
+/// they cover the equipment in `cost`. Returns None when they do not; the caller then must not
+/// commit.
+pub async fn use_material_equipment(
+  transaction: &deadpool_postgres::Transaction<'_>,
+  user_id: UserId,
+  materials: &[crate::api::smith_upgrade::ItemPowerUpMaterial],
+  cost: &Cost,
+) -> anyhow::Result<Option<Vec<RemoteData>>> {
+  let mut remote = Vec::new();
+  let mut used = Cost::new();
+  for material in materials {
+    #[rustfmt::skip]
+    let deleted = transaction.query_opt(/* language=postgresql */ r#"
+      delete from user_items_equipment where id = $1 and user_id = $2 and not is_locked
+      returning item_type, item_id, level
+    "#, &[&(material.unique_id as i64), &user_id]).await.context("failed to use material equipment")?;
+    let Some(row) = deleted else {
+      tracing::warn!(unique_id = material.unique_id, "material equipment not found or locked");
+      continue;
+    };
+    let (item_type, item_id, level): (i64, i64, i32) = (row.get(0), row.get(1), row.get(2));
+    *used.entry((item_type as i32, item_id)).or_default() += 1;
+    let details_id = details(item_type as i32, item_id, level)
+      .and_then(|row| row["item_id_details"].as_str()?.parse().ok())
+      .unwrap_or(item_id);
+    remote.push(delete_equipment(item_type as i32, details_id, material.unique_id as i64));
+  }
+  for (key, &num) in cost.iter().filter(|(key, _)| is_equipment(key.0)) {
+    if used.get(key).copied().unwrap_or(0) < num {
+      tracing::warn!(?key, num, ?used, "material equipment missing");
+      return Ok(None);
+    }
+  }
+  Ok(Some(remote))
+}
+
 /// Takes the materials and money. Returns None (and changes nothing) when something is missing.
+/// Equipment materials are left to [use_material_equipment].
 pub async fn pay(
   transaction: &deadpool_postgres::Transaction<'_>,
   user_id: UserId,
@@ -93,7 +137,7 @@ pub async fn pay(
   cost: &Cost,
   money: i64,
 ) -> anyhow::Result<Option<Vec<RemoteData>>> {
-  for (&(item_type, item_id), &num) in cost {
+  for (&(item_type, item_id), &num) in cost.iter().filter(|(key, _)| !is_equipment(key.0)) {
     #[rustfmt::skip]
     let owned: i32 = transaction.query_opt(/* language=postgresql */ r#"
       select quantity from user_items where user_id = $1 and item_type = $2 and item_id = $3
@@ -109,7 +153,7 @@ pub async fn pay(
   }
   let update = UpdateItemCountBy::new(transaction).await?;
   let mut remote = Vec::new();
-  for (&(item_type, item_id), &num) in cost {
+  for (&(item_type, item_id), &num) in cost.iter().filter(|(key, _)| !is_equipment(key.0)) {
     remote.extend(
       update
         .run(user_id, (RemoteDataItemType::from(item_type), item_id), -num)

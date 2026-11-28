@@ -114,12 +114,14 @@ pub struct BlacksmithReturnedItem {
 }
 
 // body={"num": "1", "item_id": "12211", "material_equipments": "[]", "item_type": "5"}
+// See [Wonder_Api_BlacksmithRequest_Fields]
 #[derive(Debug, Deserialize)]
 pub struct BlacksmithRequest {
   pub num: i32,
   pub item_type: i32,
   pub item_id: i64,
-  pub material_equipments: Vec<i64>,
+  /// Weapons or accessories used up as materials: [{unique_id, item_type}] (like item_power_up)
+  pub material_equipments: Vec<crate::api::smith_upgrade::ItemPowerUpMaterial>,
 }
 
 pub async fn blacksmith(
@@ -143,15 +145,27 @@ pub async fn blacksmith(
   let mut client = state.get_database_client().await?;
   let transaction = client.transaction().await.context("failed to start transaction")?;
 
-  // One equipment per craft: pay its materials and money
-  let (cost, money) = crate::api::smith_cost::craft_cost(params.item_type, params.item_id, 1).context("unknown equipment")?;
+  // `num` equipments: pay their materials and money
+  let num = params.num.clamp(1, 99);
+  let (cost, money) = crate::api::smith_cost::craft_cost(params.item_type, params.item_id, num).context("unknown equipment")?;
   let mut wallet = crate::user::wallet::Wallet::load(&transaction, session.user_id).await?;
   let Some(mut paid) = crate::api::smith_cost::pay(&transaction, session.user_id, &mut wallet, &cost, money).await? else {
     warn!(?params, ?cost, money, "not enough to craft equipment");
     return Ok(Signed(CallResponse::new_success(Box::new(BlacksmithResponse { items: vec![], returned_items: vec![] })), session));
   };
+  // Equipment used up as material
+  let Some(used) =
+    crate::api::smith_cost::use_material_equipment(&transaction, session.user_id, &params.material_equipments, &cost).await?
+  else {
+    warn!(?params, ?cost, "material equipment missing for crafting");
+    return Ok(Signed(CallResponse::new_success(Box::new(BlacksmithResponse { items: vec![], returned_items: vec![] })), session));
+  };
+  paid.extend(used);
   wallet.save(&transaction, session.user_id).await?;
-  paid.extend(wallet.to_remote_data());
+  // Only the Eris spent, as a delta (the whole wallet made the client show less, see item_power_up)
+  if money > 0 {
+    paid.push(crate::api::smith_cost::spend_money(money));
+  }
   #[rustfmt::skip]
   let statement = transaction
     .prepare(/* language=postgresql */ r#"
@@ -161,49 +175,40 @@ pub async fn blacksmith(
     "#)
     .await
     .context("failed to prepare statement")?;
-  let row = transaction
-    .query_one(
-      &statement,
-      &[&session.user_id, &(params.item_type as i64), &params.item_id],
-    )
-    .await
-    .context("failed to execute query")?;
-  debug!(?row, "created equipment item");
+  let mut items = Vec::new();
+  let mut remote = Vec::new();
+  for _ in 0..num {
+    let row = transaction
+      .query_one(&statement, &[&session.user_id, &(params.item_type as i64), &params.item_id])
+      .await
+      .context("failed to execute query")?;
+    debug!(?row, "created equipment item");
 
-  let id = row.get::<_, i64>("id");
-  let item_type = row.get::<_, i64>("item_type") as i32;
-  let item_id = row.get::<_, i64>("item_id");
-  let level = row.get::<_, i32>("level");
-  let is_locked = row.get::<_, bool>("is_locked");
-  let item_details_id = crate::api::smith_cost::details(item_type, item_id, level)
-    .and_then(|row| row["item_id_details"].as_str()?.parse::<i64>().ok())
-    .or_else(|| item_to_item_details.get(&(item_id, level)).copied())
-    .context(format!("missing item details for item_id={} level={}", item_id, level))?;
-
-  let mut response = CallResponse::new_success(Box::new(BlacksmithResponse {
-    items: vec![BlacksmithItem {
+    let id = row.get::<_, i64>("id");
+    let item_type = row.get::<_, i64>("item_type") as i32;
+    let item_id = row.get::<_, i64>("item_id");
+    let level = row.get::<_, i32>("level");
+    let is_locked = row.get::<_, bool>("is_locked");
+    let item_details_id = crate::api::smith_cost::details(item_type, item_id, level)
+      .and_then(|row| row["item_id_details"].as_str()?.parse::<i64>().ok())
+      .or_else(|| item_to_item_details.get(&(item_id, level)).copied())
+      .context(format!("missing item details for item_id={} level={}", item_id, level))?;
+    items.push(BlacksmithItem {
       unique_id: id,
       item_type,
       item_id: item_details_id,
       item_num: 1,
-    }],
-    returned_items: vec![
-      // BlacksmithReturnedItem {
-      //   item_type: 5,
-      //   item_id: 111101,
-      //   item_num: 2,
-      // }
-    ],
+    });
+    remote.extend(
+      AddEquipment::new(RemoteDataItemType::from(item_type), item_details_id, id as i32, is_locked).into_remote_data(),
+    );
+  }
+
+  let mut response = CallResponse::new_success(Box::new(BlacksmithResponse {
+    items,
+    returned_items: vec![],
   }));
-  response.remote.extend(
-    AddEquipment::new(
-      RemoteDataItemType::from(item_type),
-      item_details_id,
-      id as i32,
-      is_locked,
-    )
-      .into_remote_data(),
-  );
+  response.remote.extend(remote);
   response.remote.extend(paid);
 
   transaction.commit().await.context("failed to commit transaction")?;
