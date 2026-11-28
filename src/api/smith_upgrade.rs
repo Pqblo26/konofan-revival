@@ -148,20 +148,13 @@ pub async fn item_power_up(
     warn!(?params, ?cost, money, "not enough to upgrade equipment");
     return Ok(Unsigned(CallResponse::new_success(Box::new(ItemPowerUpResponse { items: vec![], returned_items: vec![] }))));
   };
-  for material in &params.material_equipments {
-    #[rustfmt::skip]
-    let deleted = transaction.query_opt(/* language=postgresql */ r#"
-      delete from user_items_equipment where id = $1 and user_id = $2 and not is_locked
-      returning item_type, item_id, level
-    "#, &[&(material.unique_id as i64), &session.user_id]).await.context("failed to use material equipment")?;
-    if let Some(row) = deleted {
-      let (item_type, item_id, level): (i64, i64, i32) = (row.get(0), row.get(1), row.get(2));
-      let details = crate::api::smith_cost::details(item_type as i32, item_id, level)
-        .and_then(|row| row["item_id_details"].as_str()?.parse().ok())
-        .unwrap_or(item_id);
-      paid.push(crate::api::smith_cost::delete_equipment(item_type as i32, details, material.unique_id as i64));
-    }
-  }
+  let Some(used) =
+    crate::api::smith_cost::use_material_equipment(&transaction, session.user_id, &params.material_equipments, &cost).await?
+  else {
+    warn!(?params, ?cost, "material equipment missing for the upgrade");
+    return Ok(Unsigned(CallResponse::new_success(Box::new(ItemPowerUpResponse { items: vec![], returned_items: vec![] }))));
+  };
+  paid.extend(used);
   wallet.save(&transaction, session.user_id).await?;
   // Only the Eris spent, as a delta: the client does not take it off by itself, and the whole
   // wallet on top made it show 50,000 less until the next login
