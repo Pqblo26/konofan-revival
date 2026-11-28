@@ -272,11 +272,14 @@ async fn total_boss_info(state: &AppState, session: &Session, event_id: i32) -> 
   let defeats = event_boss_defeats(&client, session.user_id, event_id).await?;
   let goals = boss_count_goals(event_id);
   let received = received_boss_count_goals(&client, session.user_id, &goals).await?;
+  let total = defeats as i64 * all_players_multiplier();
   Ok(TotalBossInfo {
-    total_defeat_count: (defeats as i64 * all_players_multiplier()).min(i32::MAX as i64) as i32,
+    total_defeat_count: total.min(i32::MAX as i64) as i32,
     my_defeat_count: defeats,
+    // Only the goals reached: the client shows a goal that is listed as receivable (or received)
     boss_count_rewards: goals
       .iter()
+      .filter(|goal| goal.1 <= total)
       .map(|goal| BossCountRewards {
         count_id: goal.0,
         is_received: received.contains(&goal.0),
