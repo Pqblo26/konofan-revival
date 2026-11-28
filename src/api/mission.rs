@@ -7,7 +7,8 @@ use tracing::{info, warn};
 use crate::api::mission_progress::{self, MissionState};
 
 use crate::api::master_all::{get_master_manager, get_masters};
-use crate::api::{battle, ApiRequest};
+use crate::api::{battle, ApiRequest, NotificationData};
+use crate::user::id::UserId;
 use crate::api::battle::{
   AutoProgressionResultResponse, BattleResultResponse,
 };
@@ -689,4 +690,51 @@ pub async fn mission_get_all(
   }));
   response.remote.extend(remote);
   Ok(Signed(response, session))
+}
+
+/// The recommended mission cards: one per active event and the home screen's one. For events
+/// ("event_mission_recommend") the client shows the first row, by priority, that has a notification
+/// of type 10 (key = recommend_id, value = mission_id), and "Done" when none has. So each event gets one for its highest-priority
+/// mission not received yet, and none once all are received.
+pub async fn recommend_event_notifications(
+  client: &deadpool_postgres::Client,
+  user_id: UserId,
+) -> anyhow::Result<Vec<NotificationData>> {
+  #[rustfmt::skip]
+  let received: std::collections::HashSet<i32> = client.query(/* language=postgresql */ r#"
+    select mission_id from user_missions where user_id = $1
+  "#, &[&user_id]).await.context("failed to read received missions")?
+    .iter().map(|row| row.get(0)).collect();
+  let int = |row: &serde_json::Value, key: &str| row[key].as_str().and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
+  let rows = get_master_manager().get_master("event_mission_recommend");
+  let mut notifications = Vec::new();
+  for event_id in crate::api::master_all::active_event_ids() {
+    let mut candidates = rows
+      .iter()
+      .filter(|row| row["event_id"].as_str() == Some(event_id.as_str()))
+      .filter(|row| !received.contains(&int(row, "mission_id")))
+      .collect::<Vec<_>>();
+    candidates.sort_by_key(|row| std::cmp::Reverse(int(row, "priority")));
+    if let Some(row) = candidates.first() {
+      notifications.push(NotificationData::new(
+        1,
+        10,
+        int(row, "recommend_id"),
+        int(row, "mission_id"),
+        String::new(),
+        String::new(),
+      ));
+    }
+  }
+  // The home screen's recommended mission ("mission_recommend"), type 6, works the same way
+  let mut home = get_master_manager()
+    .get_master("mission_recommend")
+    .iter()
+    .filter(|row| !received.contains(&int(row, "mission_id")))
+    .collect::<Vec<_>>();
+  home.sort_by_key(|row| std::cmp::Reverse(int(row, "priority")));
+  if let Some(row) = home.first() {
+    notifications.push(NotificationData::new(1, 6, int(row, "recommend_id"), int(row, "mission_id"), String::new(), String::new()));
+  }
+  Ok(notifications)
 }

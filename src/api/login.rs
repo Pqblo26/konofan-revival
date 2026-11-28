@@ -205,15 +205,16 @@ pub async fn login(state: Arc<AppState>, Params(params): Params<LoginRequestRequ
     )]),
     Err(error) => warn!(?error, "failed to check jobs for the Jobs badge"),
   }
+  match crate::api::mission::recommend_event_notifications(&client, session.user_id).await {
+    Ok(notifications) => response.add_notifications(notifications),
+    Err(error) => warn!(?error, "failed to work out the recommended event missions"),
+  }
   response.add_notifications(vec![
     NotificationData::new(1, 8, 0, 0, "".to_string(), "".to_string()),
     NotificationData::new(1, 7, 14, 0, "".to_string(), "".to_string()),
     NotificationData::new(1, 7, 14, 0, "".to_string(), "".to_string()),
     NotificationData::new(1, 7, 14, 0, "".to_string(), "".to_string()),
     NotificationData::new(1, 7, 14, 0, "".to_string(), "".to_string()),
-    NotificationData::new(1, 6, 1, 30030001, "".to_string(), "".to_string()),
-    NotificationData::new(1, 10, 230731, 52307325, "".to_string(), "".to_string()),
-    NotificationData::new(1, 10, 230831, 52308305, "".to_string(), "".to_string()),
     NotificationData::new(1, 12, 19, 200012, "".to_string(), "".to_string()),
     NotificationData::new(1, 12, 19, 410535, "".to_string(), "".to_string()),
     NotificationData::new(1, 12, 19, 410536, "".to_string(), "".to_string()),
