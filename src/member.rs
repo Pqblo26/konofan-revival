@@ -646,9 +646,8 @@ impl<'a> FetchUserParty<'a> {
   }
 }
 
-/// The Fame Trait each form has set. Only with `send_party_traits` in config/fame-quest.toml: with a
-/// trait set, Team > Party stayed on "Now Loading" for good (27/11), even with the trait's added
-/// stat sent. The trait is still saved; only the team screens do not see it.
+/// The Fame Trait each form has set (user id for the team screens, master id for battles), unless
+/// `send_party_traits` is off in config/fame-quest.toml.
 async fn fill_party_traits(client: &tokio_postgres::Client, user_id: UserId, parties: &mut [Party]) {
   if !crate::api::fame::fame_settings().send_party_traits {
     return;
@@ -659,8 +658,9 @@ async fn fill_party_traits(client: &tokio_postgres::Client, user_id: UserId, par
   }
   for party in parties.iter_mut() {
     for form in party.party_forms.iter_mut() {
-      if let Some(id) = traits.get(&(form.party_no as i64, form.form_no as i64)) {
-        form.skill_pa_fame = *id;
+      if let Some(&(id, master_id)) = traits.get(&(form.party_no as i64, form.form_no as i64)) {
+        form.skill_pa_fame = id;
+        form.skill_pa_fame_master = master_id;
       }
     }
   }
@@ -709,6 +709,7 @@ pub fn materialize_party_rows(rows: Vec<Row>) -> Vec<Party> {
               trial: false,
             },
             skill_pa_fame: 0,
+            skill_pa_fame_master: 0,
           }
         })
         .collect::<Vec<_>>()

@@ -183,8 +183,13 @@ pub struct PartyForm {
   pub acc: i64,
   pub strength: i32,
   pub specialskill: SpecialSkillInfo,
-  /// "Fame Trait"
+  /// "Fame Trait": the user's trait id (`user_skill_pa_fame`), which the team screens look up
+  /// among the owned traits (remote data type 43)
   pub skill_pa_fame: i64,
+  /// The same trait's master id (`skill_pa_fame`): battles look it up in the master directly, so
+  /// [Self::to_basic_battle_party_form] sends this one
+  #[serde(skip)]
+  pub skill_pa_fame_master: i64,
   /* Wonder_Api_PartyinfoPartyFormResponseDto_Fields */
   pub party_no: i32,
   /// Must not be empty
@@ -207,6 +212,7 @@ impl PartyForm {
         trial: false,
       },
       skill_pa_fame: 0,
+      skill_pa_fame_master: 0,
       party_no,
       name: format!("Party{}", party_no),
     }
@@ -222,7 +228,7 @@ impl PartyForm {
       sub2: self.sub2,
       weapon: self.weapon as i32,
       acc: self.acc as i32,
-      skill_pa_fame: self.skill_pa_fame,
+      skill_pa_fame: self.skill_pa_fame_master,
     }
   }
 }

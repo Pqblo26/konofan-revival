@@ -240,16 +240,19 @@ pub fn fame_quest_bonus(member: &Member) -> [i32; 5] {
 }
 
 /// The trait each form of these parties has set (party id, form id) -> user trait id.
-pub async fn party_traits(client: &tokio_postgres::Client, user_id: UserId) -> HashMap<(i64, i64), i64> {
+pub async fn party_traits(client: &tokio_postgres::Client, user_id: UserId) -> HashMap<(i64, i64), (i64, i64)> {
   if !tables_ready(client).await {
     return HashMap::new();
   }
   #[rustfmt::skip]
   let rows = client.query(/* language=postgresql */ r#"
-    select party_id, form_id, user_skill_pa_fame_id from user_party_form_fame where user_id = $1
+    select f.party_id, f.form_id, f.user_skill_pa_fame_id, s.skill_pa_fame_id
+    from user_party_form_fame f
+      join user_skill_pa_fame s on s.user_id = f.user_id and s.id = f.user_skill_pa_fame_id
+    where f.user_id = $1
   "#, &[&user_id]).await;
   match rows {
-    Ok(rows) => rows.into_iter().map(|row| ((row.get(0), row.get(1)), row.get(2))).collect(),
+    Ok(rows) => rows.into_iter().map(|row| ((row.get(0), row.get(1)), (row.get(2), row.get(3)))).collect(),
     Err(error) => {
       warn!(?error, "failed to load party fame traits");
       HashMap::new()
