@@ -17,3 +17,8 @@ ids = [
   24011, # Etiquette for This New Year's Party!
   24041, # A Service For This Forbidden Weakest Adventurer!
 ]
+
+# Misión global («All Players») de los eventos con jefe para todos (24041): sus metas piden de
+# 100.000 a 1.000.000 victorias de toda la comunidad. Jugando solo, «All Players» es lo que llevas
+# tú multiplicado por este número (10.000: 10 victorias dan la primera meta y 100 la última).
+all_players_multiplier = 10000
